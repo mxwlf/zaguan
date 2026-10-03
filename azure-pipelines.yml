@@ -1,0 +1,130 @@
+# ---------------------------------------------------------------------------
+# Azure DevOps Pipeline — THIN WRAPPER
+# ---------------------------------------------------------------------------
+# This pipeline deliberately contains no build logic. It only:
+#   1. checks out the code,
+#   2. provides a Python interpreter,
+#   3. runs `make ci`.
+#
+# `make ci` builds the repo-local virtualenv (.venv/) from that interpreter and
+# installs the pinned `pre-commit` from requirements-dev.txt into it, exactly as
+# a developer's `make setup` does — so there is nothing to install globally here.
+#
+# All actual checks live in the Makefile (`make ci`) and run identically on a
+# developer laptop and in GitHub Actions (.github/workflows/ci.yml). To change
+# WHAT runs in CI, edit the Makefile and .pre-commit-config.yaml — not this
+# file. The only things that belong here are platform-specific concerns that
+# cannot live in a portable script: triggers, the agent image, and
+# prerequisite installation.
+#
+# Determinism: tool versions are pinned (Python below; `pre-commit` in
+# requirements-dev.txt; hook versions via `rev` in .pre-commit-config.yaml).
+# Bump them deliberately.
+
+# Trunk-based: `main` is the only long-lived branch. The `pr` trigger fires for a
+# pull request from any source branch; `trigger` covers `main` only, since adding
+# feature branches would build the same commits twice for no extra signal.
+trigger:
+  branches:
+    include:
+      - main
+
+pr:
+  branches:
+    include:
+      - main
+
+pool:
+  # Pinned rather than `ubuntu-latest`: that label is remapped to a new Ubuntu release
+  # periodically, which would change the build environment underneath you on Microsoft's
+  # schedule instead of yours. Bump this deliberately.
+  vmImage: ubuntu-24.04
+
+steps:
+  # An explicit checkout, solely to set fetchDepth: 0. Versioning is derived from git history —
+  # Nerdbank.GitVersioning counts commits since version.json last changed its version field to produce
+  # the patch number — and the implicit checkout Azure would otherwise inject fetches shallowly, which
+  # leaves nothing to count. This is the counterpart of fetch-depth: 0 in .github/workflows/ci.yml.
+  - checkout: self
+    fetchDepth: 0
+
+  # Interpreter used to build .venv. Any version >= 3.10 works (see MIN_PYTHON
+  # in the Makefile); it is pinned here only for reproducible runs, not because
+  # the hooks need this exact version.
+  - task: UsePythonVersion@0
+    inputs:
+      versionSpec: "3.14"
+
+  # The .NET SDK. useGlobalJson points the task at the same global.json the build itself resolves
+  # through, so the agent compiles with exactly the pinned SDK and `make check-dotnet` cannot fail
+  # here. This is the counterpart of actions/setup-dotnet in .github/workflows/ci.yml, and it exists
+  # for the same reason UsePythonVersion does: installing a prerequisite toolchain is an agent concern
+  # that cannot live in a portable script. The Makefile only verifies the SDK; it never installs one.
+  - task: UseDotNet@2
+    inputs:
+      packageType: sdk
+      useGlobalJson: true
+
+  # Cache pre-commit hook environments keyed on the config so unchanged hooks
+  # are not rebuilt on every run.
+  - task: Cache@2
+    inputs:
+      key: 'pre-commit | "$(Agent.OS)" | .pre-commit-config.yaml'
+      path: $(HOME)/.cache/pre-commit
+
+  # The single entrypoint. Everything CI does is defined in the Makefile.
+  - script: make ci
+    displayName: make ci
+
+  # `make ci` writes a TRX report per test module and one merged Cobertura report; these two tasks are
+  # what turn them into the Tests and Code Coverage tabs on the run. Azure DevOps renders both formats
+  # first-class, so there is nothing to publish as a plain artifact here — unlike GitHub Actions, whose
+  # workflow uploads the same files as a downloadable zip because it has no such UI.
+  #
+  # succeededOrFailed(), because the run worth reading the results of is the one that failed; make has
+  # already decided the build's outcome by then, so neither task is allowed to influence it —
+  # failTaskOnFailedTests stays off and an empty coverage file is not an error. Both are legitimately
+  # absent when `make ci` stopped in `lint`, which each task reports as a warning.
+  - task: PublishTestResults@2
+    condition: succeededOrFailed()
+    displayName: Publish test results
+    inputs:
+      testResultsFormat: VSTest
+      testResultsFiles: artifacts/test-results/*.trx
+      mergeTestResults: true
+      failTaskOnFailedTests: false
+
+  - task: PublishCodeCoverageResults@2
+    condition: succeededOrFailed()
+    displayName: Publish code coverage
+    inputs:
+      summaryFileLocation: artifacts/coverage/Cobertura.xml
+      pathToSources: $(Build.SourcesDirectory)
+      failIfCoverageEmpty: false
+
+  # The SBOM has no dedicated tab to render into, unlike the two reports above, so it is published as
+  # a plain pipeline artifact — the Azure counterpart of the upload-artifact step in
+  # .github/workflows/ci.yml. succeededOrFailed() for the same reason the tasks above use it: the run
+  # whose inventory someone wants is as likely to be the red one. The condition also tolerates
+  # `make ci` having stopped in `lint`, before `sbom` ran, which is why the path is checked first —
+  # PublishPipelineArtifact fails outright on a missing path rather than warning.
+  - script: |
+      if [ -d artifacts/sbom ]; then echo '##vso[task.setvariable variable=sbomExists]true'; fi
+    condition: succeededOrFailed()
+    displayName: Check for SBOM
+
+  - task: PublishPipelineArtifact@1
+    condition: and(succeededOrFailed(), eq(variables['sbomExists'], 'true'))
+    displayName: Publish SBOM
+    inputs:
+      targetPath: artifacts/sbom
+      artifact: sbom
+
+  # The packages, as their own artifact for the same reason as in .github/workflows/ci.yml: they are
+  # the output, not a report. No condition, so this runs only on success — a run that failed before
+  # `pack` has nothing to publish, and PublishPipelineArtifact fails on a missing path.
+  - task: PublishPipelineArtifact@1
+    displayName: Publish packages
+    inputs:
+      targetPath: artifacts/package
+      artifact: package

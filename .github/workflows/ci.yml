@@ -1,0 +1,292 @@
+# ---------------------------------------------------------------------------
+# GitHub Actions CI — THIN WRAPPER
+# ---------------------------------------------------------------------------
+# This workflow deliberately contains no build logic. It only:
+#   1. checks out the code,
+#   2. provides a Python interpreter,
+#   3. runs `make ci`.
+#
+# `make ci` builds the repo-local virtualenv (.venv/) from that interpreter and
+# installs the pinned `pre-commit` from requirements-dev.txt into it, exactly as
+# a developer's `make setup` does — so there is nothing to install globally here.
+#
+# All actual checks live in the Makefile (`make ci`) and run identically on a
+# developer laptop. To change WHAT runs in CI, edit the Makefile and
+# .pre-commit-config.yaml — not this file. The only things that belong here are
+# platform-specific concerns that cannot live in a portable script: triggers,
+# the runner image, and prerequisite installation.
+#
+# Determinism: tool versions are pinned (Python below; `pre-commit` in
+# requirements-dev.txt; hook versions via `rev` in .pre-commit-config.yaml).
+# Bump them deliberately.
+name: ci
+
+on:
+  # Trunk-based: `main` is the only long-lived branch. Feature branches are short-lived and reach
+  # `main` only through a pull request, so the pull_request trigger is the gate — it fires for a pull
+  # request from ANY head branch, which is why no head-branch list is needed here. It also earns its
+  # keep beyond gating: the test reporter annotates failed and skipped tests on the pull request's own
+  # "Files changed" diff, and a pull request that never triggers a run gets none of that.
+  #
+  # The push trigger covers `main` only, deliberately: adding feature branches would run the same
+  # commits twice (once for the push, once for the pull request) for no extra signal.
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Least privilege for the automatically provisioned GITHUB_TOKEN, and the narrowest set that still
+# works: checkout reads the repository, and nothing else here touches the API. The test reporter
+# needs no token at all — annotations, log groups and the job summary are workflow commands written
+# to stdout and to $GITHUB_STEP_SUMMARY, not API calls — and actions/cache is likewise unaffected.
+# Stating this closes the CodeQL actions/missing-workflow-permissions finding, which fires on the
+# default token being left at whatever the repository hands out.
+#
+# This is the DEFAULT for every job, which is what keeps the build — the job that runs on untrusted
+# pull requests — read-only. The attest job at the bottom of this file needs more than that, so it
+# widens its own permissions block rather than this one being loosened for everybody.
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    # Whether this build produced any packages. The attest job needs it, and so does the upload
+    # below: a repository that ships nothing — an application rather than a library — has no
+    # package artifact, and steps that assume one must stand down rather than fail.
+    outputs:
+      packages: ${{ steps.packages.outputs.produced }}
+    # Pinned rather than `ubuntu-latest`: that label is remapped to a new Ubuntu release
+    # periodically, which would change the build environment underneath you on GitHub's
+    # schedule instead of yours. Bump this deliberately.
+    runs-on: ubuntu-24.04
+    steps:
+      # fetch-depth: 0 because versioning is derived from git history. Nerdbank.GitVersioning counts
+      # the commits since version.json last changed its version field to produce the patch number, so
+      # it needs that history present. The action's default is a depth-1 shallow clone, which has no
+      # history to count — and this matters *because* version.json exists: before it did, no height
+      # was computed and a shallow clone was harmless.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # Interpreter used to build .venv. Any version >= 3.10 works (see
+      # MIN_PYTHON in the Makefile); it is pinned here only for reproducible
+      # runs, not because the hooks need this exact version.
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+
+      # The .NET SDK. Unlike the Python version above, this is not a free choice:
+      # global-json-file points the action at the same global.json that the build
+      # itself resolves through, so CI compiles with exactly the pinned SDK and
+      # `make check-dotnet` cannot fail here. The action would also discover a
+      # root global.json on its own, but naming it keeps the coupling explicit.
+      #
+      # This step exists for the same reason setup-python does: installing a
+      # prerequisite toolchain is a runner concern that cannot live in a portable
+      # script. The Makefile only *verifies* the SDK (`make check-dotnet`); it
+      # deliberately never installs one.
+      #
+      # cache/cache-dependency-path cache the NuGet global-packages folder, the
+      # direct analogue of the pre-commit cache below. The key is a hash of every
+      # packages.lock.json, which RestorePackagesWithLockFile (Directory.Build.props)
+      # guarantees exists and keeps committed, so the key only moves when a
+      # dependency actually changes. The glob is quoted because a leading `*` would
+      # otherwise be read as a YAML alias.
+      #
+      # The tool manifest is hashed alongside them because `make coverage` restores
+      # the pinned local tools into that same folder, and nothing else in the key
+      # moves when a tool version is bumped.
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: |
+            **/packages.lock.json
+            .config/dotnet-tools.json
+
+      # Cache pre-commit hook environments keyed on the config so unchanged
+      # hooks are not rebuilt on every run.
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+
+      # The historical context the test report attaches to each reported failure ("failed 2 of 3
+      # prior runs") comes from a small snapshot that `make test` reads before the run and rewrites
+      # afterwards (TEST_HISTORY_DIR in the Makefile). The reporter deliberately does not move that
+      # file between runs, so the workflow has to — which is exactly the kind of platform-specific
+      # plumbing that belongs here rather than in the Makefile. A cache is the vehicle instead of an
+      # artifact because artifacts are scoped to the run that produced them and would have to be
+      # hunted down through the API.
+      #
+      # restore and save are separate steps rather than the combined actions/cache used above for
+      # two reasons: the combined action saves only when the job succeeds, and a failing run is
+      # precisely the one whose outcome the next run needs; and a save is rejected when its key
+      # already exists, so the key has to move every run. Hence the rolling run_id key paired with a
+      # prefix restore-key, which resolves to the most recent earlier snapshot.
+      - uses: actions/cache/restore@v6
+        with:
+          path: artifacts/test-history
+          key: gh-test-history-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: gh-test-history-${{ runner.os }}-
+
+      # The single entrypoint. Everything CI does is defined in the Makefile.
+      - run: make ci
+
+      # What the reporter writes to the job summary is a rendering; these are the files. The TRX report
+      # and the merged Cobertura report otherwise live and die on the runner, since artifacts/ is
+      # gitignored — so without this step there is no way to open a test result, feed coverage to
+      # another tool, or compare two runs after the fact.
+      #
+      # always(), for the same reason the history cache below is saved unconditionally: the run whose
+      # reports someone wants to download is the red one. if-no-files-found stays at a warning because
+      # `make ci` legitimately produces nothing here when it stops in `lint`, before any test runs.
+      #
+      # No permissions block is needed: the artifact API is reached with the runner's own artifact
+      # token, not the GITHUB_TOKEN scoped at the top of this file. The Html report inside the zip is
+      # browsable only after downloading; serving it in place would mean GitHub Pages, which is a
+      # publishing decision this template does not make for its consumers.
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: ci-reports
+          path: |
+            artifacts/test-results/
+            artifacts/coverage/
+            artifacts/sbom/
+          if-no-files-found: warn
+          # Matched to TEST_HISTORY_WINDOW_DAYS in the Makefile, so a failure's report is still
+          # downloadable for as long as the summary keeps claiming it happened.
+          retention-days: 30
+
+      # The packages get their own artifact rather than joining ci-reports above, because they are not
+      # reports: they are the thing this repository produces, and someone fetching a build to install
+      # or inspect should not have to download test output to get at it. The .snupkg comes along with
+      # the .nupkg (IncludeSymbols in Directory.Build.props).
+      #
+      # Deliberately NOT if: always(). A package only exists when `make ci` got as far as `pack`, so
+      # limiting this to a successful run lets if-no-files-found be an assertion rather than a shrug:
+      # a green run that somehow produced no package fails here instead of silently uploading nothing.
+      # Whether `make pack` actually produced anything. Packaging is opt-in per project, so a
+      # repository can legitimately have nothing packable, and then there is no artifact to upload
+      # and nothing for the attest job to attest. Reported as a notice, not a warning: it is the
+      # intended configuration for an application, not a problem to flag.
+      #
+      # This step inherits the default success() condition, so on a failed build it is skipped, its
+      # output is empty, and every condition below reads false — which is what should happen.
+      - name: Record whether packages were produced
+        id: packages
+        run: |
+          if [ -n "$(ls -A artifacts/package/release 2> /dev/null)" ]; then
+            echo "produced=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "produced=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No packages produced — no project sets IsPackable=true."
+          fi
+
+      - uses: actions/upload-artifact@v7
+        if: steps.packages.outputs.produced == 'true'
+        with:
+          name: package
+          path: artifacts/package/
+          # Kept as an assertion rather than relaxed to `warn`: the step now only runs when packages
+          # were found on disk, so reaching it and finding none means the glob and the pack output
+          # have diverged, which is worth failing over. An empty directory does not count —
+          # upload-artifact ignores those, which is how this failed in the first place.
+          if-no-files-found: error
+          retention-days: 30
+
+      # always(), because a red run is the one whose outcome most needs recording: without it the
+      # history would be a record of green runs only, and no failure would ever look repeated.
+      # continue-on-error, because the snapshot is a nicety in a job summary and must never be the
+      # thing that fails a build — it is legitimately absent when `make ci` stopped in `lint`, before
+      # any test ran.
+      - uses: actions/cache/save@v6
+        if: always()
+        continue-on-error: true
+        with:
+          path: artifacts/test-history
+          key: gh-test-history-${{ runner.os }}-${{ github.run_id }}
+
+  # -------------------------------------------------------------------------------------------------
+  # Provenance and SBOM attestations for the packages.
+  # -------------------------------------------------------------------------------------------------
+  # These are GitHub's Sigstore-backed artifact attestations: cryptographic statements that a specific
+  # artifact digest was built by this workflow, from this commit, on this runner — and, separately,
+  # that a given SBOM describes it. They are not a NuGet signature: NuGet clients do not read them, and
+  # nuget.org's own repository signature is applied on upload regardless. Verification is out of band,
+  # against the artifact AS BUILT — the `package` artifact on this run:
+  #
+  #     gh attestation verify mxwlf.net.library.example.0.1.18-alpha.nupkg --repo mxwlf/dotnet-template
+  #
+  # A copy fetched from nuget.org will NOT verify. The repository signature adds a .signature.p7s entry
+  # to the archive, which changes the digest an attestation binds. That is inherent, not fixable here:
+  # these attest what this repository built, up to the moment of upload.
+  #
+  # WHY A SEPARATE JOB: attestations need `id-token: write` and `attestations: write`. The ci job above
+  # is deliberately held at `contents: read`, and it runs on every pull request. Splitting keeps the
+  # build itself at least privilege and grants the elevated token only to a job that runs afterwards,
+  # on a trusted ref, and does nothing but make claims about what the build already produced.
+  #
+  # WHY ONLY ON A PUSH TO MAIN: an attestation is a permanent public record about an artifact digest.
+  # Pull-request builds produce packages nobody can install, so attesting them would fill the log with
+  # claims about artifacts that do not exist anywhere. Add `refs/tags/v*` to the condition when the
+  # release workflow lands.
+  #
+  # WHY IT SKIPS PRIVATE REPOSITORIES: attestations are not available for user-owned private repos.
+  # Attempting one there does not warn, it fails the job:
+  #
+  #     Error: Failed to persist attestation: Feature not available for user-owned private repositories.
+  #
+  # Keying on repository visibility means one workflow serves both cases — a repo made private does
+  # not need its CI edited, and a repo made public starts attesting again on its own. If you are on
+  # GitHub Enterprise Cloud, where attestations DO work for private repositories, drop the
+  # `!github.event.repository.private` clause to turn them back on.
+  attest:
+    needs: ci
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.repository.private && needs.ci.outputs.packages == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write # mint the OIDC token that identifies this workflow to Sigstore
+      attestations: write # record the attestation against this repository
+    steps:
+      # The artifacts the ci job uploaded, deliberately NOT a rebuild. An attestation binds a digest,
+      # so it must describe the exact bytes that get submitted. Rebuilding here would attest an artifact
+      # nobody ships — and the same rule governs publishing: the release step pushes THIS file, not a
+      # fresh `dotnet pack`, so the chain from commit to upload stays unbroken. Note that nuget.org
+      # re-signs on upload, so the copy it serves has a different digest either way; keeping this hop
+      # honest is still what makes the attestation mean anything.
+      - uses: actions/download-artifact@v8
+        with:
+          name: package
+          path: package
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: ci-reports
+          path: reports
+
+      # SLSA build provenance. The .snupkg is attested alongside the .nupkg because it is equally a
+      # build output that someone may fetch and want to trace back to a commit.
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            package/**/*.nupkg
+            package/**/*.snupkg
+
+      # Binds the SPDX document `make sbom` produced to the same subjects, so the dependency inventory
+      # for a package is something a consumer can fetch and verify rather than take on trust. Both
+      # files are named as subjects because the SBOM's own file inventory covers both.
+      #
+      # actions/attest, not actions/attest-sbom: the latter is deprecated in favour of this unified
+      # action, which takes the same `sbom-path` input and derives the SPDX predicate type from the
+      # document itself. attest-build-provenance above is NOT deprecated and stays as it is —
+      # generating SLSA provenance through the generic action would mean hand-building the predicate.
+      - uses: actions/attest@v4
+        with:
+          subject-path: |
+            package/**/*.nupkg
+            package/**/*.snupkg
+          sbom-path: reports/sbom/_manifest/spdx_2.2/manifest.spdx.json

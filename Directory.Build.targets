@@ -1,0 +1,28 @@
+<Project>
+  <!-- Every production assembly exposes its internals to its own unit test assembly, which is named
+       after it with a .tests.unit suffix. This keeps the public API surface limited to what callers
+       are meant to use while still letting the tests exercise internal members directly. Test
+       projects are skipped because they have no unit test assembly of their own.
+
+       This belongs in Directory.Build.targets rather than Directory.Build.props because both
+       $(AssemblyName) and $(IsTestProject) are only final once the project body has been evaluated.
+       Directory.Build.props is imported before that, so a project setting its own <AssemblyName>
+       would be pointed at the default name instead of the one it chose. -->
+  <ItemGroup Condition="'$(IsTestProject)' != 'true'">
+    <InternalsVisibleTo Include="$(AssemblyName).tests.unit" />
+  </ItemGroup>
+
+  <!-- Package validation, for projects that ship. This is here rather than in
+       Directory.Build.props for the same reason as the item above: $(IsPackable) is only final once
+       the project body has been evaluated, so a condition in .props reads the inherited default
+       instead of the project's own choice — and silently enabled validation on the test project,
+       which does not ship, when this lived there.
+
+       No readme, icon or other content is packed from here on purpose. What goes INTO a package
+       describes that package, so the project that ships declares it, alongside the matching
+       $(PackageReadmeFile) / $(PackageIcon). A shared item here would put the repository README into
+       every package in the solution regardless of whether it says anything about them. -->
+  <PropertyGroup Condition="'$(IsPackable)' == 'true'">
+    <EnablePackageValidation>true</EnablePackageValidation>
+  </PropertyGroup>
+</Project>

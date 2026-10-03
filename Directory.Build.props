@@ -1,0 +1,154 @@
+<Project>
+  <PropertyGroup>
+    <!-- The one place to change which frameworks everything targets. Use a `;`-separated list to
+         multi-target: `net10.0;net9.0`. -->
+    <LibraryTargetFrameworks>net10.0</LibraryTargetFrameworks>
+
+    <!-- Singular for one framework, plural for several — and the distinction matters far more than
+         it looks.
+
+         Setting $(TargetFrameworks) makes a project a CROSS-TARGETING build even when the list has
+         a single entry. A cross-targeting project is really two builds: an outer build that only
+         dispatches, and an inner build per framework that does the work. Most SDK targets exist
+         only on the inner build, so on the outer build they are simply absent:
+
+             error MSB4057: The target "GetTargetPath" does not exist in the project.
+
+         `dotnet build` hides this, because the CLI drives the outer→inner dispatch itself and never
+         asks the outer build for a target it lacks. Anything that queries a project directly does
+         not: Rider calls GetTargetPath to resolve a project reference's output assembly and fails
+         on every project, and the same root cause surfaces as MSB4036 PickBestRid and MSB4057
+         ComputeRunArguments under the Aspire SDK. One defect, several faces.
+
+         So: set the singular property when there is one framework, which keeps every project a
+         plain single-targeting build, and fall back to the plural only for a real list. The
+         $(TargetFramework)/$(TargetFrameworks) guards mean a project that sets either itself still
+         wins; note that because this file is imported before the project body, a project
+         multi-targeting against the repo default has to clear the singular as well:
+
+             <TargetFramework></TargetFramework>
+             <TargetFrameworks>net10.0;net9.0</TargetFrameworks> -->
+    <TargetFramework Condition="'$(TargetFramework)' == '' and '$(TargetFrameworks)' == '' and '$(LibraryTargetFrameworks)' != '' and !$(LibraryTargetFrameworks.Contains(';'))">$(LibraryTargetFrameworks)</TargetFramework>
+    <TargetFrameworks Condition="'$(TargetFramework)' == '' and '$(TargetFrameworks)' == ''">$(LibraryTargetFrameworks)</TargetFrameworks>
+
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AnalysisLevel>latest</AnalysisLevel>
+    <AnalysisMode>All</AnalysisMode>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <!-- Diagnostics are always produced, but they only fail the build in Release. Development
+         builds report them as warnings so a work-in-progress change can be compiled and run
+         without stopping to clean up every finding first. `make build` and `make test` use
+         $(CONFIGURATION), which defaults to Release, so `make ci` — the single command the
+         pipelines invoke — still holds the code to the strict bar. The git pre-commit hooks do not
+         compile anything, so `make ci` (locally or in CI) is where this is first enforced.
+
+         The comparison is against Release rather than != Debug on purpose: this file is imported
+         before the SDK defaults Configuration, so $(Configuration) is empty here for a plain
+         `dotnet build`, and != Debug would match that and make the default dev build the strict
+         one. -->
+    <TreatWarningsAsErrors Condition="'$(Configuration)' == 'Release'">true</TreatWarningsAsErrors>
+
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild Condition="'$(CI)' == 'true' or '$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <DebugType>portable</DebugType>
+
+    <!-- Write source-generator output to disk. Generators do not persist their output by default,
+         and the compiler then records a synthetic path for each generated document — a path that
+         reaches the PDB and therefore the coverage data. reportgenerator reads it, finds nothing,
+         and logs for every generated file:
+
+             File '.../LoggerMessage.g.cs' does not exist (any more).
+
+         Emitting makes those paths real: with this set the compiler records where it actually wrote
+         the file, and the report renders generated code instead of warning about it. No coverage
+         NUMBER changes — the lines were always counted; only the source behind them was missing.
+
+         Do NOT try to redirect this with $(CompilerGeneratedFilesOutputPath) to remove the
+         `generated/` segment the SDK appends. Pointing it at the intermediate directory makes the
+         compiler reject the argument outright, on every project that has no generator output:
+
+             error CS2021: File name '.../obj/<project>/release/' is empty, contains invalid
+             characters, ...
+
+         Everything written lands under $(ArtifactsPath), which is gitignored. -->
+    <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+
+    <!-- Shipping is opt-in. Nothing here is packable unless it says so, because "packable unless
+         you opt out" is the wrong default for a repository that will grow projects nobody intends
+         to publish — samples, benchmarks, integration-test hosts, internal tools. A project that
+         ships declares it for itself:
+
+             <IsPackable>true</IsPackable>
+
+         and owns the metadata that describes *it* — Description, PackageTags, PackageReadmeFile —
+         together with a Pack item for every file it puts in the package. See
+         src/library.example/library.example.csproj for the worked example.
+
+         Do not guard anything on $(IsPackable) in THIS file. Directory.Build.props is imported
+         before the project body, so a condition here reads whatever default is in scope rather
+         than the project's own choice. Guards that depend on it belong in
+         Directory.Build.targets, which is imported afterwards.
+
+         The properties that remain below are facts about the repository rather than about any one
+         package, so they are shared: same license, same owner, same origin. -->
+    <IsPackable>false</IsPackable>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <Authors>mxwlf</Authors>
+    <Company>mxwlf</Company>
+    <!-- The copyright notice is a legal assertion, so it names the copyright holder and matches
+         LICENSE verbatim. $(Authors) and $(Company) above stay as the publishing handle: they are
+         display metadata on nuget.org, and they line up with the GitHub account the repository and
+         project URLs point at. -->
+    <Copyright>Copyright (c) 2026 Edgar Adrian Padilla Vega</Copyright>
+    <RepositoryType>git</RepositoryType>
+    <RepositoryUrl>https://github.com/mxwlf/dotnet-template</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/mxwlf/dotnet-template</PackageProjectUrl>
+  </PropertyGroup>
+
+  <!-- Enable artifacts output layout (https://learn.microsoft.com/en-us/dotnet/core/sdk/artifacts-output) -->
+  <PropertyGroup>
+     <UseArtifactsOutput>true</UseArtifactsOutput>
+     <ArtifactsPath>$(MSBuildThisFileDirectory)artifacts</ArtifactsPath>
+  </PropertyGroup>
+
+  <!-- EnablePackageValidation is NOT set here: it depends on $(IsPackable), which is not final until
+       the project body has been evaluated. It lives in Directory.Build.targets instead. -->
+  <PropertyGroup>
+    <PackageValidationBaselineVersion Condition="'$(ApiCompatBaselineVersion)' != ''">$(ApiCompatBaselineVersion)</PackageValidationBaselineVersion>
+    <ApiCompatSuppressionFile Condition="Exists('$(MSBuildThisFileDirectory)eng/versions/CompatibilitySuppressions.xml')">$(MSBuildThisFileDirectory)eng/versions/CompatibilitySuppressions.xml</ApiCompatSuppressionFile>
+  </PropertyGroup>
+
+  <!-- The deny-list that Microsoft.CodeAnalysis.BannedApiAnalyzers enforces as RS0030. The package
+       supplies the analyzer and nothing else: its targets add no AdditionalFiles item of their own,
+       so without this the analyzer loads on every build, finds no list, and reports nothing — which
+       is exactly what it did here until this item was added.
+
+       One list for the whole repository, hence $(MSBuildThisFileDirectory) rather than a relative
+       path: AdditionalFiles is resolved against each consuming project's directory, so a bare
+       `BannedSymbols.txt` would silently resolve to nothing in every project that does not have its
+       own copy. A project that needs to ban more than the repository does — keeping a transport
+       library out of the domain, say — adds a second AdditionalFiles item for its own file; the
+       lists are unioned. There is no way to un-ban, so anything added here is added everywhere. -->
+  <ItemGroup>
+    <AdditionalFiles Include="$(MSBuildThisFileDirectory)BannedSymbols.txt" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Meziantou.Analyzer" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.VisualStudio.Threading.Analyzers" PrivateAssets="all" />
+    <PackageReference Include="Nerdbank.GitVersioning" PrivateAssets="all" />
+    <PackageReference Include="Roslynator.Analyzers" PrivateAssets="all" />
+    <PackageReference Include="SonarAnalyzer.CSharp" PrivateAssets="all" />
+  </ItemGroup>
+</Project>

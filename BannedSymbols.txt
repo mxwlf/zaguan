@@ -1,0 +1,125 @@
+# APIs banned in this repository, enforced by Microsoft.CodeAnalysis.BannedApiAnalyzers as RS0030.
+# Wired up by the AdditionalFiles item in Directory.Build.props, which applies this one list to
+# every project in the solution.
+
+# FORMAT
+# ------
+# One documentation comment ID per line, optionally followed by `;` and the message RS0030 appends
+# when the symbol is used.
+
+#     T:  type        M:  method (constructors are `.#ctor`)        N:  namespace, and all of it
+#     P:  property    F:  field                                     E:  event
+
+# Generic arity is part of the ID: one backtick for a type (Task`1), two for a method (ToList``1).
+# Listing the same symbol twice is RS0031.
+
+# THREE THINGS THAT WILL BITE YOU
+# -------------------------------
+# 1. AN ID THAT DOES NOT RESOLVE IS SILENTLY IGNORED. There is no diagnostic for a typo, for a
+#    symbol that moved, or for an overload that does not exist — the entry simply never fires and
+#    the API stays allowed. Three entries below were first written as `M:System.DateTimeOffset.get_Now`,
+#    `P:System.Threading.Tasks.Task.Result` and a bare `M:...Task.Wait`; all three look right, and
+#    all three banned nothing. After adding or editing a line, write code that uses the API and
+#    confirm RS0030 actually fires.
+
+# 2. NAMING A METHOD WITHOUT A SIGNATURE MATCHES ONLY THE PARAMETERLESS OVERLOAD. It is not a
+#    wildcard. That is why Task.Wait is listed six times, once per overload.
+
+# 3. NEVER LEAVE A BARE `#` ON A LINE. The parser strips the comment marker and keeps what follows,
+#    so `#` alone is an entry for the empty symbol name — and two of them are a duplicate, which
+#    fails the build with `RS0031: The symbol '' is listed multiple times`. Separate comment blocks
+#    with a blank line (those are genuinely ignored) or put text after the `#`.
+
+# Deprecated Newtonsoft serialization.
+# One entry, not two: a namespace ban covers descendant namespaces as well as the namespace itself
+# — verified — so this reaches Newtonsoft.Json.Linq, Newtonsoft.Json.Serialization and every type
+# inside them, JsonConvert included. A separate `T:Newtonsoft.Json.JsonConvert` line added nothing
+# except a second diagnostic on the same call, so the guidance it carried was folded into the
+# message here.
+N:Newtonsoft.Json;The legacy Newtonsoft namespace is prohibited. Use System.Text.Json (JsonSerializer) instead for modern performance.
+
+# Time-zone and determinism safeguards.
+P:System.DateTime.Now;Use DateTime.UtcNow or TimeProvider to ensure time-zone neutrality and mockability.
+P:System.DateTimeOffset.Now;Use DateTimeOffset.UtcNow instead.
+
+# Blocking on tasks. `Result` lives on Task<TResult>, not Task, so the ID needs the arity backtick.
+P:System.Threading.Tasks.Task`1.Result;Blocking on Task.Result can cause thread-pool starvation. Use await instead.
+P:System.Threading.Tasks.ValueTask`1.Result;Blocking on ValueTask.Result can cause thread-pool starvation, and reading it more than once is undefined. Use await instead.
+M:System.Threading.Tasks.Task.Wait;Synchronous waiting is banned. Use await instead.
+M:System.Threading.Tasks.Task.Wait(System.Int32);Synchronous waiting is banned. Use await instead.
+M:System.Threading.Tasks.Task.Wait(System.Int32,System.Threading.CancellationToken);Synchronous waiting is banned. Use await instead.
+M:System.Threading.Tasks.Task.Wait(System.Threading.CancellationToken);Synchronous waiting is banned. Use await instead.
+M:System.Threading.Tasks.Task.Wait(System.TimeSpan);Synchronous waiting is banned. Use await instead.
+M:System.Threading.Tasks.Task.Wait(System.TimeSpan,System.Threading.CancellationToken);Synchronous waiting is banned. Use await instead.
+
+# `GetAwaiter().GetResult()`, the other half of "synchronous waiting is banned" and the form most
+# likely to be reached for once Task.Result and Task.Wait are gone.
+
+# It is the AWAITER'S GetResult that is banned here, not Task.GetAwaiter. Banning GetAwaiter as well
+# was tried and rejected: it reports twice on every blocking call, and it takes out the legitimate
+# plumbing uses — a custom awaiter, or a `.GetAwaiter().IsCompleted` fast-path check — which do not
+# block at all.
+
+# Ordinary `await` is NOT affected. The compiler lowers an await expression into GetAwaiter and
+# GetResult calls of its own, and RS0030 does not report those because they are implicit rather than
+# written; this was verified against `await task`, `await task.ConfigureAwait(false)` and the
+# ValueTask equivalents before these lines were added.
+
+# Four awaiter families, each in a generic and a non-generic form, because ConfigureAwait returns a
+# different awaitable type than the task it was called on. All eight IDs were confirmed to resolve.
+M:System.Runtime.CompilerServices.TaskAwaiter.GetResult;Blocking on a task can cause thread-pool starvation and deadlock. Use await instead.
+M:System.Runtime.CompilerServices.TaskAwaiter`1.GetResult;Blocking on a task can cause thread-pool starvation and deadlock. Use await instead.
+M:System.Runtime.CompilerServices.ConfiguredTaskAwaitable.ConfiguredTaskAwaiter.GetResult;Blocking on a task can cause thread-pool starvation and deadlock. Use await instead.
+M:System.Runtime.CompilerServices.ConfiguredTaskAwaitable`1.ConfiguredTaskAwaiter.GetResult;Blocking on a task can cause thread-pool starvation and deadlock. Use await instead.
+M:System.Runtime.CompilerServices.ValueTaskAwaiter.GetResult;Blocking on a value task can cause thread-pool starvation and deadlock. Use await instead.
+M:System.Runtime.CompilerServices.ValueTaskAwaiter`1.GetResult;Blocking on a value task can cause thread-pool starvation and deadlock. Use await instead.
+M:System.Runtime.CompilerServices.ConfiguredValueTaskAwaitable.ConfiguredValueTaskAwaiter.GetResult;Blocking on a value task can cause thread-pool starvation and deadlock. Use await instead.
+M:System.Runtime.CompilerServices.ConfiguredValueTaskAwaitable`1.ConfiguredValueTaskAwaiter.GetResult;Blocking on a value task can cause thread-pool starvation and deadlock. Use await instead.
+
+# Waiting on several tasks at once. Same objection as Task.Wait — a thread sits idle — and the same
+# fix one level up: `await Task.WhenAll(...)` and `await Task.WhenAny(...)` do the same job without
+# occupying one.
+
+# Two things to know when migrating a call rather than writing a new one:
+
+#   * WaitAll throws an AggregateException holding EVERY failure. `await Task.WhenAll(...)` throws
+#     only the first. To keep the old behaviour, hold the task and rethrow its .Exception:
+#         var all = Task.WhenAll(running);
+#         try { await all.ConfigureAwait(false); }
+#         catch (Exception) when (all.Exception is not null) { throw all.Exception; }
+
+#   * WaitAny returns an INDEX; `await Task.WhenAny(...)` returns the finished Task itself. Read it
+#     with `await finished`, not `finished.Result` — which is banned above, and rightly: the task is
+#     already complete so it would not block, but it wraps the failure in an AggregateException
+#     instead of rethrowing the original.
+
+# Twelve overloads, seven and five, each listed because a bare method name matches only the
+# parameterless form and neither of these has one. All twelve were confirmed to resolve and fire,
+# including the params ReadOnlySpan overload that C# 13 now prefers for `Task.WaitAll(t1, t2)`.
+M:System.Threading.Tasks.Task.WaitAll(System.Threading.Tasks.Task[]);Use await Task.WhenAll instead.
+M:System.Threading.Tasks.Task.WaitAll(System.ReadOnlySpan{System.Threading.Tasks.Task});Use await Task.WhenAll instead.
+M:System.Threading.Tasks.Task.WaitAll(System.Threading.Tasks.Task[],System.Int32);Use await Task.WhenAll instead, with WaitAsync for the timeout.
+M:System.Threading.Tasks.Task.WaitAll(System.Threading.Tasks.Task[],System.TimeSpan);Use await Task.WhenAll instead, with WaitAsync for the timeout.
+M:System.Threading.Tasks.Task.WaitAll(System.Threading.Tasks.Task[],System.Threading.CancellationToken);Use await Task.WhenAll instead.
+M:System.Threading.Tasks.Task.WaitAll(System.Threading.Tasks.Task[],System.Int32,System.Threading.CancellationToken);Use await Task.WhenAll instead, with WaitAsync for the timeout.
+M:System.Threading.Tasks.Task.WaitAll(System.Collections.Generic.IEnumerable{System.Threading.Tasks.Task},System.Threading.CancellationToken);Use await Task.WhenAll instead.
+M:System.Threading.Tasks.Task.WaitAny(System.Threading.Tasks.Task[]);Use await Task.WhenAny instead, which returns the finished task rather than its index.
+M:System.Threading.Tasks.Task.WaitAny(System.Threading.Tasks.Task[],System.Int32);Use await Task.WhenAny instead, with WaitAsync for the timeout.
+M:System.Threading.Tasks.Task.WaitAny(System.Threading.Tasks.Task[],System.TimeSpan);Use await Task.WhenAny instead, with WaitAsync for the timeout.
+M:System.Threading.Tasks.Task.WaitAny(System.Threading.Tasks.Task[],System.Threading.CancellationToken);Use await Task.WhenAny instead, which returns the finished task rather than its index.
+M:System.Threading.Tasks.Task.WaitAny(System.Threading.Tasks.Task[],System.Int32,System.Threading.CancellationToken);Use await Task.WhenAny instead, with WaitAsync for the timeout.
+
+# Explicit synchronous constructor usage where a factory or the Zero pattern is preferred.
+M:System.TimeSpan.#ctor(System.Int32,System.Int32,System.Int32);Use TimeSpan.FromHours/Minutes/Seconds or TimeSpan.Zero for clearer intent.
+
+# EF Core synchronous materialization. In data-access layers, developers frequently call synchronous
+# materialization methods on IQueryable collections by mistake, completely destroying database
+# scalability.
+
+# Know the blast radius before editing these two: RS0030 matches the SYMBOL, not the type of the
+# receiver, and IQueryable<T> derives from IEnumerable<T>, so there is no way to say "only when the
+# source is a query". They therefore also fire on ordinary in-memory LINQ, where ToListAsync() does
+# not exist and the advice does not apply. For the in-memory case use a collection expression —
+# `[.. source]` — which produces the same result without calling the banned method.
+M:System.Linq.Enumerable.ToList``1(System.Collections.Generic.IEnumerable{``0});Do not use synchronous ToList() on queries. Materialize with ToListAsync() instead.
+M:System.Linq.Enumerable.ToArray``1(System.Collections.Generic.IEnumerable{``0});Do not use synchronous ToArray(). Use ToArrayAsync() instead.

@@ -1,0 +1,14 @@
+<Solution>
+  <Folder Name="/solutionfiles/">
+    <File Path="Directory.Build.props" />
+    <File Path="Directory.Build.targets" />
+    <File Path="Directory.Packages.props" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/library.example/library.example.csproj" />
+  </Folder>
+  <Folder Name="/test/" />
+  <Folder Name="/test/unit/">
+    <Project Path="test/unit/library.example.tests.unit/library.example.tests.unit.csproj" />
+  </Folder>
+</Solution>

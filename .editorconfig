@@ -1,0 +1,288 @@
+# Editor and code-style configuration for the whole repository.
+#
+# WHY THIS FILE IS NOT OPTIONAL
+# -----------------------------
+# Directory.Build.props sets <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>, which loads
+# the IDE* code-style analyzers into every compilation. That property only decides whether the
+# analyzers RUN; it says nothing about what severity their findings get. A code-style rule's
+# severity can only come from an .editorconfig or a .globalconfig — there is no MSBuild property
+# that sets it, and <AnalysisMode>All</AnalysisMode> does not reach them (the SDK config it selects,
+# analysislevel_<n>_all.globalconfig, contains CA entries and no IDE entry at all).
+#
+# So without this file the code-style analyzers ran on every build and reported nothing, because
+# their built-in defaults are `suggestion` and `silent` and neither of those fails a build or even
+# prints. Mangled indentation, `( 1 + 2 )` and a stray `( string s )` compiled clean in Release.
+#
+# The same reasoning applies to the naming rules at the bottom. IDE1006 is "naming rule violation",
+# and the rules it checks are the `dotnet_naming_rule` entries declared here — with none declared
+# it has nothing to compare against and can never fire, however high its severity is set.
+#
+# WHERE EACH LAYER OF CONFIGURATION LIVES
+# ---------------------------------------
+#   * CA rules            the SDK's analysislevel_10_all.globalconfig, selected by $(AnalysisLevel)
+#                         and $(AnalysisMode) in Directory.Build.props. 280 rules at warning, with
+#                         CA1516 the single exception. Do not restate those here.
+#   * S / MA / VSTHRD     the analyzer packages' own defaults. Not configured here, because each
+#                         ships the severities its maintainers intend and they are already at or
+#                         above warning for the rules that matter.
+#   * RCS / ROS           bulk-promoted below, because Roslynator's defaults are the exception.
+#   * IDE                 this file.
+#   * test-only relaxing  test/.editorconfig, which inherits everything here and turns off the few
+#                         rules that fight readable tests.
+#
+# Everything set to `warning` here becomes an ERROR in Release, where
+# <TreatWarningsAsErrors>true</TreatWarningsAsErrors> applies — that is, in `make ci`, in the
+# pre-commit build and in the pipelines. Debug builds still only warn, so a work-in-progress change
+# compiles and runs without being tidy first.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+indent_style = space
+indent_size = 4
+tab_width = 4
+# Both of these mirror the `trailing-whitespace` and `end-of-file-fixer` pre-commit hooks, so the
+# editor and the hooks agree instead of fighting each other over the same lines.
+trim_trailing_whitespace = true
+insert_final_newline = true
+
+# `end_of_line = lf` above matches `.gitattributes`, which marks these two as `eol=crlf` because
+# they are interpreted by cmd.exe.
+[*.{bat,cmd}]
+end_of_line = crlf
+
+[*.{csproj,props,targets,slnx,nuspec,config,json,yml,yaml,xml}]
+indent_size = 2
+
+# Recipe lines have to begin with a real tab; make rejects spaces there.
+[Makefile]
+indent_style = tab
+
+# Note what is NOT here: `trim_trailing_whitespace = false`, the usual markdown exception that
+# keeps two trailing spaces working as a hard line break. The `trailing-whitespace` pre-commit hook
+# is configured without --markdown-linebreak-ext and strips them on the way into a commit, so that
+# line break does not survive in this repository whatever the editor does. Use a blank line or a
+# `<br>`. Add --markdown-linebreak-ext to the hook first if you want the other behaviour.
+[*.md]
+indent_size = 2
+
+[*.cs]
+
+# ----------------------------------------------------------------------------------------------
+# Severity
+# ----------------------------------------------------------------------------------------------
+
+# Every code-style rule, on, as a warning. This is the code-style counterpart of
+# <AnalysisMode>All</AnalysisMode>: opt in wholesale, then name the individual exceptions below
+# with the reason each one is wrong for this repository, rather than hand-picking a short list and
+# silently leaving the rest unenforced. The per-rule entries further down win over this one.
+dotnet_analyzer_diagnostic.category-Style.severity = warning
+dotnet_analyzer_diagnostic.category-CodeQuality.severity = warning
+
+# Roslynator ships 182 of its 220 rules enabled, but only 15 at warning — the other 167 default to
+# `suggestion` or `silent`, which show up in Rider and vanish in CI. That made the package almost
+# decorative on a build that only fails on warnings. Promoting the category is the whole fix.
+#
+# This bulk entry does not switch on the rules Roslynator disables by default, which is the
+# behaviour wanted here: the disabled set is where its openly opinionated and mutually exclusive
+# pairs live (RCS1008 "use explicit type instead of var" against RCS1176 "use var instead of
+# explicit type", and so on). Turning those on would mean taking sides on questions this file
+# already answers through the IDE options below, and in two cases taking both sides at once.
+dotnet_analyzer_diagnostic.category-Roslynator.severity = warning
+
+# ----------------------------------------------------------------------------------------------
+# The exceptions, each with the reason it is an exception
+# ----------------------------------------------------------------------------------------------
+
+# IDE0058: Remove unnecessary expression value.
+#
+# Off, not relaxed. The rule wants every discarded expression value assigned to `_`, and nearly
+# every occurrence in this repository is a call made for its effect with a return value that is
+# genuinely uninteresting: `await sut.IsItGoodToWalkAsync(...)` in a test that asserts on the
+# substitute rather than the answer, and the NSubstitute `Received()` chains. `_ =` on each of
+# those adds a character of noise per line and no information.
+#
+# The dangerous case this might otherwise catch — calling a pure method and throwing the result
+# away, which means the call did nothing at all — is already CA1806, which is on at warning.
+dotnet_diagnostic.IDE0058.severity = none
+
+# IDE0045/IDE0046: Use conditional expression for assignment / for return.
+#
+# A three-branch temperature-then-rain decision is clearer as if/else-if/else than as the nested
+# ternary the fix produces. Left as a suggestion so the IDE still offers it where a conditional
+# expression genuinely does read better.
+dotnet_diagnostic.IDE0045.severity = suggestion
+dotnet_diagnostic.IDE0046.severity = suggestion
+
+# IDE0290: Use primary constructor.
+#
+# A primary constructor cannot validate what it captures. GoodToWalkService's constructor exists to
+# reject a null dependency at construction time instead of failing later on every call, which is
+# behaviour its tests assert on, and the generated form has nowhere to put the throw. A suggestion
+# rather than off, because for a type that only stores its parameters — as the test class does — the
+# rule is right.
+dotnet_diagnostic.IDE0290.severity = suggestion
+
+# RCS1181: Convert comment to documentation comment.
+#
+# `//` and `///` are used deliberately and differently here. `///` documents the public API and is
+# shipped in the .xml next to the package; `//` explains an implementation decision to whoever
+# edits the line, and is addressed to a reader of the source rather than a consumer of the library.
+# Promoting the second kind to the first would publish notes about private constants and test
+# fixtures as API documentation.
+dotnet_diagnostic.RCS1181.severity = none
+
+# ----------------------------------------------------------------------------------------------
+# Language and formatting preferences
+#
+# These are the questions the rules above ask but cannot answer on their own: unset, several of
+# them default to the opposite of what this repository already does, so the bulk promotion would
+# have turned the existing code into a wall of warnings. Each one is set to what the code does.
+# ----------------------------------------------------------------------------------------------
+
+# `var` throughout, which is what all 38 declarations in the repository use. Unset, these three
+# default to preferring the explicit type and IDE0008 flags every one of them.
+csharp_style_var_for_built_in_types = true
+csharp_style_var_when_type_is_apparent = true
+csharp_style_var_elsewhere = true
+
+# File-scoped namespaces, as every file here declares. This is what decides between IDE0161 (use
+# file-scoped) and IDE0160 (use block-scoped); unset, the default is block-scoped and IDE0160 flags
+# all eight files.
+csharp_style_namespace_declarations = file_scoped
+
+# No `this.` qualification, the .NET-wide convention. Worth knowing before relying on it: unlike
+# everything else in this section, these four are NOT enforced on build. IDE0003 and IDE0009 ship
+# as editor-only refactorings — setting either to `warning` explicitly was verified to report
+# nothing on a file that qualified its field writes — so what these entries actually drive is the
+# IDE and `dotnet format`. They are declared anyway so that the repository has one answer to the
+# question rather than none; GoodToWalkService used to give both.
+dotnet_style_qualification_for_field = false
+dotnet_style_qualification_for_property = false
+dotnet_style_qualification_for_method = false
+dotnet_style_qualification_for_event = false
+
+# `using` directives: outside the namespace, System first. Group separation is deliberately left
+# unset: the two existing files disagree about it (one separates every root namespace with a blank
+# line, the other does not), and IDE0055 enforces whichever value is set, so setting either would
+# reformat one of them to settle a question with no readability answer.
+csharp_using_directive_placement = outside_namespace
+dotnet_sort_system_directives_first = true
+
+# Modern language features where they are unambiguous wins. These match the existing code — the
+# property pattern in the temperature check, `nameof` in the argument exceptions — and are listed so
+# the preference survives someone writing the older form.
+csharp_style_pattern_matching_over_is_with_cast_check = true
+csharp_style_pattern_matching_over_as_with_null_check = true
+csharp_prefer_braces = true
+dotnet_style_prefer_is_null_check_over_reference_equality_method = true
+dotnet_style_null_propagation = true
+dotnet_style_coalesce_expression = true
+dotnet_style_prefer_conditional_expression_over_assignment = true
+dotnet_style_prefer_conditional_expression_over_return = true
+dotnet_style_readonly_field = true
+dotnet_style_require_accessibility_modifiers = for_non_interface_members
+
+# ----------------------------------------------------------------------------------------------
+# Naming
+#
+# IDE1006 checks the rules declared here and nothing else, so this block is what gives that rule
+# anything to enforce. The styles describe the names the repository already uses; they are written
+# out so the next contributor inherits them from the build instead of from reading existing files.
+#
+# There is deliberately no `Async` suffix rule. VSTHRD200 already covers it, and a naming rule
+# would have to be switched off wholesale in test/.editorconfig, where method names are
+# `{method}_When{inputs}_Then{expectation}` and the method under test being async says nothing
+# about the test.
+# ----------------------------------------------------------------------------------------------
+
+dotnet_naming_rule.interfaces_are_prefixed_with_i.symbols = interface_symbols
+dotnet_naming_rule.interfaces_are_prefixed_with_i.style = i_prefixed_pascal_case
+dotnet_naming_rule.interfaces_are_prefixed_with_i.severity = warning
+
+dotnet_naming_rule.type_parameters_are_prefixed_with_t.symbols = type_parameter_symbols
+dotnet_naming_rule.type_parameters_are_prefixed_with_t.style = t_prefixed_pascal_case
+dotnet_naming_rule.type_parameters_are_prefixed_with_t.severity = warning
+
+dotnet_naming_rule.types_are_pascal_case.symbols = type_symbols
+dotnet_naming_rule.types_are_pascal_case.style = pascal_case
+dotnet_naming_rule.types_are_pascal_case.severity = warning
+
+dotnet_naming_rule.constants_are_pascal_case.symbols = constant_symbols
+dotnet_naming_rule.constants_are_pascal_case.style = pascal_case
+dotnet_naming_rule.constants_are_pascal_case.severity = warning
+
+dotnet_naming_rule.static_readonly_fields_are_pascal_case.symbols = static_readonly_field_symbols
+dotnet_naming_rule.static_readonly_fields_are_pascal_case.style = pascal_case
+dotnet_naming_rule.static_readonly_fields_are_pascal_case.severity = warning
+
+dotnet_naming_rule.instance_fields_are_underscore_camel_case.symbols = instance_field_symbols
+dotnet_naming_rule.instance_fields_are_underscore_camel_case.style = underscore_camel_case
+dotnet_naming_rule.instance_fields_are_underscore_camel_case.severity = warning
+
+dotnet_naming_rule.non_field_members_are_pascal_case.symbols = non_field_member_symbols
+dotnet_naming_rule.non_field_members_are_pascal_case.style = pascal_case
+dotnet_naming_rule.non_field_members_are_pascal_case.severity = warning
+
+dotnet_naming_rule.parameters_and_locals_are_camel_case.symbols = parameter_and_local_symbols
+dotnet_naming_rule.parameters_and_locals_are_camel_case.style = camel_case
+dotnet_naming_rule.parameters_and_locals_are_camel_case.severity = warning
+
+dotnet_naming_symbols.interface_symbols.applicable_kinds = interface
+dotnet_naming_symbols.interface_symbols.applicable_accessibilities = *
+
+dotnet_naming_symbols.type_parameter_symbols.applicable_kinds = type_parameter
+dotnet_naming_symbols.type_parameter_symbols.applicable_accessibilities = *
+
+dotnet_naming_symbols.type_symbols.applicable_kinds = class, struct, enum, delegate
+dotnet_naming_symbols.type_symbols.applicable_accessibilities = *
+
+dotnet_naming_symbols.constant_symbols.applicable_kinds = field
+dotnet_naming_symbols.constant_symbols.applicable_accessibilities = *
+dotnet_naming_symbols.constant_symbols.required_modifiers = const
+
+dotnet_naming_symbols.static_readonly_field_symbols.applicable_kinds = field
+dotnet_naming_symbols.static_readonly_field_symbols.applicable_accessibilities = *
+dotnet_naming_symbols.static_readonly_field_symbols.required_modifiers = static, readonly
+
+# Scoped to the accessibilities an underscore is conventional for. A public or protected_internal
+# field is part of the API surface and would be PascalCase, but CA1051 forbids one outright, so
+# there is no style to declare for it.
+dotnet_naming_symbols.instance_field_symbols.applicable_kinds = field
+dotnet_naming_symbols.instance_field_symbols.applicable_accessibilities = private, protected, internal, private_protected
+
+dotnet_naming_symbols.non_field_member_symbols.applicable_kinds = property, method, event, namespace
+dotnet_naming_symbols.non_field_member_symbols.applicable_accessibilities = *
+
+dotnet_naming_symbols.parameter_and_local_symbols.applicable_kinds = parameter, local
+dotnet_naming_symbols.parameter_and_local_symbols.applicable_accessibilities = *
+
+dotnet_naming_style.pascal_case.capitalization = pascal_case
+
+dotnet_naming_style.camel_case.capitalization = camel_case
+
+dotnet_naming_style.underscore_camel_case.capitalization = camel_case
+dotnet_naming_style.underscore_camel_case.required_prefix = _
+
+dotnet_naming_style.i_prefixed_pascal_case.capitalization = pascal_case
+dotnet_naming_style.i_prefixed_pascal_case.required_prefix = I
+
+dotnet_naming_style.t_prefixed_pascal_case.capitalization = pascal_case
+dotnet_naming_style.t_prefixed_pascal_case.required_prefix = T
+
+# Generated code, which this repository did not write and cannot fix.
+#
+# Only RS0030 needs saying. Roslyn excludes generated files from analysis by default and most
+# analyzers accept that, but BannedApiAnalyzers opts into analyzing generated code, so the banned
+# list reaches code produced by other people's tooling. xunit's test entry point is the case that
+# forced this: xunit.v3.msbuildtasks writes XunitAutoGeneratedEntryPoint.cs with
+# `ConsoleRunner.Run(args).GetAwaiter().GetResult()` in Main — correct there, since Main is the one
+# place that genuinely has to block — and the GetResult ban in BannedSymbols.txt turned that into a
+# Release error in every test project.
+#
+# Scoped to the artifacts tree rather than to that one filename so the next generator to emit a
+# banned call does not repeat the exercise. $(ArtifactsPath) in Directory.Build.props puts all
+# generated output here, including the obj/ trees.
+[artifacts/**.cs]
+dotnet_diagnostic.RS0030.severity = none

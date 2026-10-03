@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "isRoot": true,
+  "tools": {
+    "dotnet-reportgenerator-globaltool": {
+      "version": "5.5.11",
+      "commands": [
+        "reportgenerator"
+      ],
+      "rollForward": false
+    },
+    "microsoft.dotnet.apicompat.tool": {
+      "version": "10.0.302",
+      "commands": [
+        "apicompat"
+      ],
+      "rollForward": false
+    },
+    "microsoft.sbom.dotnettool": {
+      "version": "4.1.5",
+      "commands": [
+        "sbom-tool"
+      ],
+      "rollForward": false
+    },
+    "nbgv": {
+      "version": "3.10.91",
+      "commands": [
+        "nbgv"
+      ],
+      "rollForward": false
+    }
+  }
+}

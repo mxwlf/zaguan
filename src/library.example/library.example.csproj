@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Library.Example</RootNamespace>
+  </PropertyGroup>
+
+  <!-- This project ships, so it opts in and describes itself. Nothing in Directory.Build.props
+       assumes a project is packable; see the comment there.
+
+       Description and PackageTags are here rather than shared because they describe THIS package.
+       $(TreatWarningsAsErrors) is on in Release and `dotnet pack` warns on a missing Description,
+       so a project that opts into packing without describing itself fails `make ci` — which is the
+       intended nudge rather than an inconvenience. -->
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <!-- Set explicitly rather than defaulting to $(AssemblyName): the assembly is `library.example`,
+         which as a package id would be both meaningless and unreserved. This id sits under the
+         `mxwlf.*` reserved prefix, which is what stops anyone else publishing something that looks
+         like it came from here.
+
+         A NuGet package id can never be renamed, deleted or reused — only unlisted. Change this
+         before your first tag if you are building on this template; publish.yml refuses to publish
+         while it still names this template's own id from a different repository. -->
+    <PackageId>mxwlf.net.library.example</PackageId>
+    <Description>Example library shipped by dotnet-template, a baseline .NET repository template.</Description>
+    <PackageTags>dotnet;library;template</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <!-- Every file this package contains is declared by this project. $(PackageReadmeFile) names a
+       file that has to be IN the package, and pack fails (NU5039) on a declared readme it cannot
+       find, so the Pack item below is what satisfies it.
+
+       This is the project's OWN readme, not the repository's: the root README documents the template
+       and its make targets, which tells a consumer of this package nothing about the package. -->
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+  </ItemGroup>
+</Project>

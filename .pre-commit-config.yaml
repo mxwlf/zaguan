@@ -1,0 +1,72 @@
+# See https://pre-commit.com/hooks.html for more hooks
+# See https://pre-commit.com for more information
+
+# WHY THERE ARE NO PYTHON INTERPRETER PINS HERE
+# ---------------------------------------------
+# Some hooks below (commitizen, sync-pre-commit-deps) are `language: python`
+# and require Python >= 3.10. Their upstream manifests declare
+# `language_version: python3`, and pre-commit resolves that to *the interpreter
+# running pre-commit itself* (see `_sys_executable_matches` in
+# pre_commit/languages/python.py) — not to whatever `python3` is on PATH.
+#
+# So the interpreter these hooks build against is decided by how pre-commit is
+# installed, not by anything in this file. `make setup` installs pre-commit into
+# a repo-local virtualenv (.venv/) built from a Python >= 3.10, and the hook
+# scripts in .githooks/ invoke that copy — so the hooks always get a supported
+# interpreter without pinning a `language_version` here and without requiring a
+# particular global Python.
+#
+# The failure mode this replaces: a globally installed pre-commit running under
+# an old interpreter (e.g. macOS's Python 3.9) builds these hook environments
+# with 3.9 and fails with `requires a different Python`. Previously the template
+# worked around that with a per-hook `language_version: python3.10`, which
+# forced every contributor to install that exact version globally. If you hit
+# that error now, it means the hooks are being run by a pre-commit outside
+# .venv/ — see the README's Troubleshooting section.
+repos:
+  - repo: https://github.com/pre-commit/sync-pre-commit-deps
+    rev: v0.0.4
+    hooks:
+    -   id: sync-pre-commit-deps
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+    -   id: trailing-whitespace
+    -   id: end-of-file-fixer
+    -   id: check-yaml
+    -   id: check-added-large-files
+    -   id: check-case-conflict
+    -   id: check-illegal-windows-names
+    -   id: check-merge-conflict
+    -   id: detect-private-key
+    -   id: fix-byte-order-marker
+    -   id: mixed-line-ending
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1  # Specify the desired version of Gitleaks
+    hooks:
+      - id: gitleaks
+  - repo: https://github.com/commitizen-tools/commitizen
+    rev: v4.16.3
+    hooks:
+     -  id: commitizen
+        stages: [commit-msg]
+  # Builds and tests the staged tree with `make test`, which depends on `make build` and uses the
+  # Release configuration. Analyzer findings are only errors in Release (see TreatWarningsAsErrors
+  # in Directory.Build.props): development builds default to Debug and merely warn, so this hook is
+  # the point where a warning has to be dealt with rather than deferred. pre-commit stashes unstaged
+  # work before running hooks, so what gets compiled and tested is exactly what is about to be
+  # committed.
+  #
+  # `files` keeps commits that touch no build input — documentation, the git hooks, CI YAML — from
+  # paying for a build and test run.
+  #
+  # `make lint` skips this hook (see LINT_SKIP_HOOKS in the Makefile) because `make ci` already runs
+  # the build and test targets itself.
+  - repo: local
+    hooks:
+      - id: dotnet-build-test
+        name: dotnet build + test (Release, analyzer findings are errors)
+        entry: make test
+        language: system
+        pass_filenames: false
+        files: \.(cs|csproj|slnx|props|targets|json)$

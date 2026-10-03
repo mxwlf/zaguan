@@ -1,0 +1,13 @@
+# Development tooling for this repository.
+#
+# `make setup` installs these into a repo-local virtualenv (.venv/) — nothing
+# here is ever installed globally. The git hooks in .githooks/ invoke .venv's
+# `pre-commit`, so the hooks work regardless of which Python (if any) happens
+# to be on your PATH.
+#
+# Only `pre-commit` itself belongs here. Each hook's own dependencies (e.g.
+# commitizen, gitleaks) are declared in .pre-commit-config.yaml and installed
+# by pre-commit into its own cached environments.
+#
+# Pinned for determinism — bump deliberately.
+pre-commit==4.6.2

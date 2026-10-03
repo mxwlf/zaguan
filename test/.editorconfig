@@ -1,0 +1,29 @@
+# Analyzer settings that apply to TEST code only.
+#
+# The repository builds with <AnalysisMode>All</AnalysisMode> and
+# <TreatWarningsAsErrors>true</TreatWarningsAsErrors> (see Directory.Build.props). A few
+# rules that are right for shipping library code work against readable tests, so they are
+# relaxed here — under test/ only — each with the reason it does not apply.
+[*.cs]
+
+# Test names follow the `{method}_When{inputs}_Then{expectation}` convention, which needs
+# underscores to separate the three parts.
+dotnet_diagnostic.CA1707.severity = none
+
+# A test method has no SynchronizationContext worth avoiding, and ConfigureAwait on every
+# await would bury the one line that actually is the Act phase.
+dotnet_diagnostic.CA2007.severity = none
+dotnet_diagnostic.MA0004.severity = none
+
+# Assertions about a parameter name (`.WithParameterName("zipCode")`) intentionally spell the
+# name out as a literal. Using `nameof` on an identically named local in the test would keep
+# compiling after the library renamed its parameter, silently weakening the assertion.
+dotnet_diagnostic.CA1507.severity = none
+
+# A test method's name and its `// Arrange // Act // Assert` body say what it does; an XML summary
+# on each of them would restate the name in a sentence. The test project only generates a doc file
+# so that IDE0005 can run at all — see the comment on $(GenerateDocumentationFile) in
+# library.example.tests.unit.csproj — and nothing reads the result, so the missing-doc warning that
+# comes with it has no audience here. It stays on for the shipping library, where the doc file is
+# packed into the .nupkg.
+dotnet_diagnostic.CS1591.severity = none

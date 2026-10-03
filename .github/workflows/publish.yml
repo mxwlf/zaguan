@@ -1,0 +1,198 @@
+# ---------------------------------------------------------------------------
+# Publish to nuget.org — TAG TRIGGERED
+# ---------------------------------------------------------------------------
+# Deliberately separate from ci.yml. CI runs on every pull request and is held at
+# `contents: read`; publishing needs `id-token: write` to mint an OIDC token, and nothing that
+# runs on untrusted input should ever hold that. Separating them also means a package is only
+# ever produced by an explicit version tag, never by a merge.
+#
+# Trusted publishing (OIDC) rather than a long-lived NUGET_API_KEY: NuGet/login exchanges this
+# workflow's OIDC identity for a token valid about an hour, so there is no secret to rotate or
+# leak. nuget.org matches the exchange against a policy naming this repository AND THE EXACT
+# FILENAME OF THIS FILE — renaming it from `publish.yml` breaks publishing with "no matching
+# policy" until the policy is updated to match.
+#   https://www.nuget.org/account/trustedpublishing
+#
+# The one secret still needed is NUGET_USER, the nuget.org *username* (not the email address),
+# scoped to the `release` environment rather than the repository.
+name: publish
+
+on:
+  push:
+    tags:
+      # nbgv's publicReleaseRefSpec in version.json marks the same shape of ref as a public
+      # release, which is what strips the -g<commit> suffix. Keep the two in step.
+      - "v*"
+
+# The default for every job. The publish job widens its own; nothing else here needs more.
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    # Scopes NUGET_USER to this environment and gives somewhere to hang an approval gate. The
+    # nuget.org policy must name this environment too, or the token exchange is rejected.
+    # MUST match the Environment field on the nuget.org trusted publishing policy. nuget.org
+    # validates the environment claim in the OIDC token whenever the policy names one, so a
+    # mismatch here is refused at the token exchange — not at push time, and not with an obvious
+    # message. Change both together or neither.
+    environment: release
+    permissions:
+      # write, not read, solely so the last step can create a GitHub Release. Unlike the ci
+      # workflow — which runs on pull requests from anyone and is therefore held read-only — this
+      # job runs only on a tag, which requires push access to create. The untrusted-input problem
+      # that justified splitting ci's attest job into its own job does not apply here, so the
+      # extra permission is proportionate rather than worth another job and an artifact round-trip.
+      contents: write
+      id-token: write # OIDC token for NuGet trusted publishing — NuGet/login 403s without it
+      attestations: write # attest the artifact this run is about to push
+
+    steps:
+      # fetch-depth: 0 because the version is derived from git history: nbgv counts the commits
+      # since version.json last changed its version field. The action's default depth-1 clone
+      # makes nbgv throw outright, not merely miscount.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+
+      # A tag is a claim about a version; this checks the claim against the version the build
+      # will actually stamp. Without it a mistyped tag publishes a package whose number does not
+      # match its own ref, and NuGet versions cannot be recalled.
+      - name: Verify the tag matches the computed version
+        run: |
+          make tools
+          computed="$(dotnet nbgv get-version --variable NuGetPackageVersion)"
+          tag="${GITHUB_REF_NAME#v}"
+          echo "tag=$tag computed=$computed"
+          if [ "$computed" != "$tag" ]; then
+            echo "::error::Tag '$tag' does not match the computed version '$computed'."
+            exit 1
+          fi
+
+      # A NuGet package id can never be renamed, deleted or reused — only unlisted. This repository's
+      # id sits under the reserved `mxwlf.*` prefix, so a copy of this template that tags without
+      # changing it would be rejected by nuget.org for publishing into someone else's reserved
+      # namespace. That rejection arrives late and reads cryptically, so fail here instead with an
+      # explanation. The check is exact on both id and repository, so it cannot false-positive on a
+      # legitimately different id.
+      - name: Refuse to publish this template's own package id from a fork
+        run: |
+          id="$(dotnet msbuild src/library.example/library.example.csproj -getProperty:PackageId)"
+          echo "PackageId=$id  repository=$GITHUB_REPOSITORY"
+          if [ "$id" = "mxwlf.net.library.example" ] && [ "$GITHUB_REPOSITORY" != "mxwlf/dotnet-template" ]; then
+            echo "::error::PackageId is still '$id', which belongs to the dotnet-template author and"
+            echo "::error::sits under the reserved prefix 'mxwlf.*'. Set your own PackageId before"
+            echo "::error::tagging — NuGet ids are permanent and cannot be renamed or deleted."
+            exit 1
+          fi
+
+      # The same entrypoint CI uses, so a package is never published without passing the checks
+      # that gate a merge. This produces artifacts/package/<config>/ and the SBOM.
+      - run: make ci
+
+      # Packaging is opt-in per project, so a repository can legitimately have nothing packable —
+      # an application rather than a library. Everything below that handles a package therefore has
+      # to stand down rather than fail: the attestations have no subject, `dotnet nuget push` errors
+      # on a glob that matches nothing, and the Release has no assets to attach.
+      #
+      # Reported as a notice rather than a warning: for an application this is the intended state.
+      # A tag on such a repository still produces a GitHub Release, just without assets.
+      - name: Record whether packages were produced
+        id: packages
+        run: |
+          if [ -n "$(ls -A artifacts/package/release 2> /dev/null)" ]; then
+            echo "produced=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "produced=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No packages produced — no project sets IsPackable=true. Nothing will be published to nuget.org."
+          fi
+
+      # Attest the artifact THIS run produced, before pushing it. An attestation binds a digest,
+      # so it must be generated against the exact bytes that go to nuget.org. Re-packing after
+      # attesting — or attesting a different run's output — leaves claims that silently do not
+      # apply to the package anyone installs.
+      # Skipped on a user-owned private repository, where attestations are unavailable and the
+      # attempt fails the job rather than warning. See the attest job in ci.yml for the detail;
+      # on GitHub Enterprise Cloud, drop this condition.
+      - uses: actions/attest-build-provenance@v4
+        if: ${{ !github.event.repository.private && steps.packages.outputs.produced == 'true' }}
+        with:
+          subject-path: |
+            artifacts/package/release/*.nupkg
+            artifacts/package/release/*.snupkg
+
+      # actions/attest, not actions/attest-sbom: the latter is deprecated in favour of this unified
+      # action, which takes the same `sbom-path` input and derives the SPDX predicate type from the
+      # document itself. attest-build-provenance above is NOT deprecated and stays as it is.
+      - uses: actions/attest@v4
+        if: ${{ !github.event.repository.private && steps.packages.outputs.produced == 'true' }}
+        with:
+          subject-path: |
+            artifacts/package/release/*.nupkg
+            artifacts/package/release/*.snupkg
+          sbom-path: artifacts/sbom/_manifest/spdx_2.2/manifest.spdx.json
+
+      # Immediately before the push: the token this returns is short-lived, so a login placed
+      # earlier in a long job can expire before it is used.
+      - name: NuGet login (OIDC)
+        id: login
+        if: steps.packages.outputs.produced == 'true'
+        uses: NuGet/login@v1
+        with:
+          user: ${{ secrets.NUGET_USER }} # nuget.org username, NOT the email address
+
+      # --skip-duplicate makes a re-run idempotent instead of failing on a version that already
+      # exists. The matching .snupkg is pushed automatically alongside the .nupkg; --no-symbols
+      # would opt out.
+      - name: Push to nuget.org
+        if: steps.packages.outputs.produced == 'true'
+        run: >
+          dotnet nuget push artifacts/package/release/*.nupkg
+          --api-key ${{ steps.login.outputs.NUGET_API_KEY }}
+          --source https://api.nuget.org/v3/index.json
+          --skip-duplicate
+
+      # LAST, deliberately: nothing here may stand between a built package and nuget.org. If this
+      # step fails the publish has already happened, so the worst case is a missing Release rather
+      # than a missing package. It is also why the release is not created before the push.
+      #
+      # The attached .nupkg is the artifact that was attested two steps above, byte for byte. That
+      # matters because the copy nuget.org serves is NOT verifiable: nuget.org adds its repository
+      # signature on upload, changing the archive and therefore the digest. So this Release is the
+      # only public place the attestations can actually be checked against.
+      #
+      # `gh` is preinstalled on the runner, so this needs no third-party action. Idempotent on
+      # purpose: a re-run uploads over the existing assets instead of failing with 422
+      # already_exists, which is the documented trap with release actions.
+      - name: Publish a GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="$GITHUB_REF_NAME"
+          # A semver prerelease carries a hyphen (0.1.18-alpha); mark those so they do not show as
+          # the latest stable release.
+          case "$tag" in *-*) prerelease="--prerelease" ;; *) prerelease="" ;; esac
+
+          # Assets are collected into the positional parameters so the empty case needs no special
+          # command: a repository with nothing packable still gets a Release, with notes and no
+          # files. `set --` clears them first, since this shell inherits none.
+          set --
+          if [ -n "$(ls -A artifacts/package/release 2> /dev/null)" ]; then
+            set -- artifacts/package/release/*
+          else
+            echo "::notice::No packages to attach; creating the Release without assets."
+          fi
+
+          if gh release view "$tag" > /dev/null 2>&1; then
+            echo "Release $tag exists."
+            if [ "$#" -gt 0 ]; then
+              gh release upload "$tag" "$@" --clobber
+            fi
+          else
+            gh release create "$tag" "$@" --title "$tag" --generate-notes --verify-tag $prerelease
+          fi
