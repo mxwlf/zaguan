@@ -33,7 +33,7 @@
 
 .DEFAULT_GOAL := help
 
-SOLUTION := dotnet-template.slnx
+SOLUTION := zaguan.slnx
 CONFIGURATION ?= Release
 ARTIFACTS_DIR ?= artifacts
 # Versioning is NOT a make variable: it is derived from git history by Nerdbank.GitVersioning,
