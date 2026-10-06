@@ -62,9 +62,29 @@ var keyCloakAdminPassword = builder.AddParameter(
 // `aspire publish` or `aspire deploy`. Seeding a deployed Keycloak means baking the realm into an
 // image (WithDockerfile) or driving the admin API from an init job instead.
 // See https://aspire.dev/integrations/security/keycloak/.
-// Keycloak's own default HTTP port inside the container. Named rather than inlined so the number
-// is stated once and S109 has something to point at.
-const int keycloakPort = 8080;
+//
+// ---------------------------------------------------------------------------------------------
+// EVERY PORT THIS REPOSITORY BINDS LIVES IN 242xx, ON PURPOSE
+// ---------------------------------------------------------------------------------------------
+//   24210/24211  Aspire dashboard (https/http)    } Properties/launchSettings.json
+//   24220/24221  Aspire OTLP endpoint             }
+//   24230/24231  Aspire resource service          }
+//   24280        Keycloak                         keycloakPort below
+//
+// One contiguous block rather than the template's defaults, because the defaults are what every
+// other stack on a developer's machine reaches for too. This is not hypothetical: the template
+// these numbers came from is also the source of the sibling indicia-focus-chat repository, so the
+// two asked for the IDENTICAL dashboard, OTLP and resource-service ports AND the same Keycloak
+// 8080, and could not run side by side at all. 8080 is additionally taken by an unrelated local
+// stack on the machines this runs on. That sibling now owns 241xx; this one owns 242xx, so
+// "does this collide?" is one range check instead of seven.
+//
+// Note that the number below is the HOST side only. Keycloak still serves its own 8080 and 8443
+// inside the container's network namespace, untouched — AddKeycloak maps the host port onto the
+// container's 8080 for us.
+//
+// Named rather than inlined so the number is stated once and S109 has something to point at.
+const int keycloakPort = 24280;
 
 builder.AddKeycloak("keycloak", keycloakPort, keyCloakAdminUsername, keyCloakAdminPassword)
     .WithRealmImport("./Realms")
