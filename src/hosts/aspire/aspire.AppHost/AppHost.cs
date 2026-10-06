@@ -68,6 +68,16 @@ const int keycloakPort = 8080;
 
 builder.AddKeycloak("keycloak", keycloakPort, keyCloakAdminUsername, keyCloakAdminPassword)
     .WithRealmImport("./Realms")
+    // Raises the request-header limits from Vert.x's 8192-byte default, because a shared localhost
+    // cookie jar overflows it and the symptom is a bare 431 on the admin console or a login page.
+    // Cookies are scoped by host, not by port or scheme, so every other application a developer
+    // runs on localhost contributes to the headers this container receives.
+    //
+    // Delivered as a mounted properties file because Keycloak offers no option of its own and
+    // ignores the equivalent QUARKUS_ environment variable. Note that TWO limits are involved — the
+    // HTTP/1.1 one and the separate HTTP/2 one, which is the only one a browser is subject to here.
+    // Both the reasoning and the measurements are in the file.
+    .WithBindMount("./Keycloak/quarkus.properties", "/opt/keycloak/conf/quarkus.properties", isReadOnly: true)
     .WithLifetime(ContainerLifetime.Session);
 
 // MA0032 asks for the CancellationToken overload. There is no token to pass here: this await IS
