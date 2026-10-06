@@ -33,8 +33,12 @@
          the same template and failed identically; this change is that one propagated. The cost of
          the default is that DCP and the dashboard follow the installed CLI rather than a number
          here, leaving the SDK version in the Project element above as the only place carrying
-         13.6.0. `make check-aspire` is what asserts the CLI is present at all. Re-add `Dnx` only
-         alongside a CI run that proves both problems above are gone. -->
+         13.6.0 — and that NOTHING in this repository currently asserts the installed CLI agrees
+         with it. The sibling repository guards that with a `make check-aspire` target that compares
+         the version the CLI reports against its pinned value; there is no equivalent here yet,
+         because this Makefile has no `run` target for such a check to hang off. Worth adding
+         alongside one.
+         Re-add `Dnx` only alongside a CI run that proves both problems above are gone. -->
 
     <UserSecretsId>2dceb9a7-95b2-44fd-8e73-40400e8895a5</UserSecretsId>
   </PropertyGroup>
