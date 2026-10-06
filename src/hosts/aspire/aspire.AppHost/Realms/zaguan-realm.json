@@ -1,0 +1,63 @@
+{
+  "realm": "zaguan",
+  "displayName": "Zaguan (local development)",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "accessTokenLifespan": 300,
+  "roles": {
+    "realm": [
+      {
+        "name": "zaguan-user",
+        "description": "Baseline role every signed-in Zaguan user holds."
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "zaguan-web",
+      "name": "Zaguan web frontend",
+      "description": "Public OIDC client for a browser frontend. Public plus PKCE because a browser cannot keep a secret.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "http://localhost:*/*",
+        "https://localhost:*/*"
+      ],
+      "webOrigins": [
+        "+"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:*/*##https://localhost:*/*"
+      }
+    }
+  ],
+  "users": [
+    {
+      "username": "developer",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "developer@localhost",
+      "firstName": "Local",
+      "lastName": "Developer",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "developer",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "zaguan-user"
+      ]
+    }
+  ]
+}
