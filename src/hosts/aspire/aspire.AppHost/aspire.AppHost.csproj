@@ -7,20 +7,34 @@
     <Nullable>enable</Nullable>
     <AspireUseCliBundle>true</AspireUseCliBundle>
 
-    <!-- Resolve the Aspire CLI through `dnx` instead of from PATH, so the CLI that supplies DCP
-         and the dashboard is the one this repository pins rather than whatever the machine has
-         installed. `Dnx` is the ONE mode that reads the unversioned `Aspire.Cli` package and so
-         honours .config/dotnet-tools.json, which pins 13.6.0; `make tools` restores it. Every
-         other mode, the `Path` default included, appends @$(AspireHostingSDKVersion) and ignores
-         the manifest. See https://aspire.dev/get-started/aspire-sdk/#running-with-dotnet-run.
+    <!-- THERE IS DELIBERATELY NO $(AspireCliInvocationMode) HERE, AND IT IS NOT AN OVERSIGHT.
+         The default — `Path` — is what builds on a clean machine. This project briefly set `Dnx`,
+         which resolves the CLI through the unversioned `Aspire.Cli` package and so honours a
+         .config/dotnet-tools.json pin, giving the repository control of the DCP and dashboard
+         version rather than taking whatever the machine has installed. That is a genuinely better
+         property and it does not survive contact with CI. Both halves of it broke, each in a way
+         that names nothing useful:
 
-         This property and the manifest pin are a PAIR — without the pin this mode floats to the
-         latest published Aspire.Cli, because the unversioned package is what makes the manifest
-         readable at all. The pin is also a second place carrying 13.6.0, after the SDK version in
-         the Project element above; move them together. A manifest left behind pairs an older
-         CLI's DCP and dashboard with a newer hosting SDK, which shows up as ASPIRE009 or a
-         version-skew failure at startup rather than as a build error naming the manifest. -->
-    <AspireCliInvocationMode>Dnx</AspireCliInvocationMode>
+           * `Dnx` makes the CLI bundle mandatory and its absence fatal. On a runner with no
+             `aspire` on PATH the build falls through to an automatic `dnx` bootstrap of the
+             `aspire.cli setup` command — a ~182 MB download — which exited 1 with its own output
+             swallowed, surfacing only as error ASPIRE009 from inside
+             Aspire.Hosting.AppHost.targets, raised against this csproj after every other project
+             in the solution had already compiled.
+           * The .config/dotnet-tools.json entry that `Dnx` needs breaks `dotnet tool restore`
+             itself on linux-x64. With `aspire.cli` in the manifest, every OTHER tool in it fails
+             to resolve — "the commands contained in the package are aspire" for reportgenerator,
+             apicompat, sbom-tool and nbgv alike — and the restore partially fails. Removing the
+             entry restores all four. Reproduced on a cleared cache, so it is the manifest and not
+             stale state; it does not reproduce on macos-arm64, which is why a green local build
+             said nothing about it.
+
+         Both were diagnosed in the sibling indicia-focus-chat repository, which was generated from
+         the same template and failed identically; this change is that one propagated. The cost of
+         the default is that DCP and the dashboard follow the installed CLI rather than a number
+         here, leaving the SDK version in the Project element above as the only place carrying
+         13.6.0. `make check-aspire` is what asserts the CLI is present at all. Re-add `Dnx` only
+         alongside a CI run that proves both problems above are gone. -->
 
     <UserSecretsId>2dceb9a7-95b2-44fd-8e73-40400e8895a5</UserSecretsId>
   </PropertyGroup>
