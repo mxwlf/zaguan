@@ -140,6 +140,36 @@
        lists are unioned. There is no way to un-ban, so anything added here is added everywhere. -->
   <ItemGroup>
     <AdditionalFiles Include="$(MSBuildThisFileDirectory)BannedSymbols.txt" />
+    <!-- Thresholds for the CA code-metrics rules. Those four ship disabled and are switched on in
+         .editorconfig; this is where their numbers come from. The file has to be named exactly
+         CodeMetricsConfig.txt for the analyzer to find it, whatever directory it sits in. -->
+    <AdditionalFiles Include="$(MSBuildThisFileDirectory)eng/analyzers/CodeMetricsConfig.txt" />
+  </ItemGroup>
+
+  <!-- Every rule of every analyzer that arrives as a NuGet package, on, as a warning.
+       $(AnalysisMode) does this for CA and the category-Style entry in .editorconfig does it for
+       IDE, but neither reaches the third-party analyzers, and no bulk entry can:
+       `dotnet_analyzer_diagnostic.severity` and its per-category form only re-rank rules that are
+       already enabled — they do not switch on a rule its analyzer ships disabled. Verified by
+       probe, and corroborated by the SDK itself implementing <AnalysisMode>All</AnalysisMode> as
+       281 explicit CA entries rather than one line.
+
+       So the strict default is reached by naming all 1,065 of them, which is a generated file:
+           make analyzers-sync
+
+       It covers package analyzers only, on purpose. Their versions are pinned by
+       Directory.Packages.props and the lock files, so the generated file is reproducible on any
+       machine. The SDK's own analyzers are excluded because global.json floats the SDK patch
+       (`rollForward: latestPatch`), which would make the committed file depend on whichever patch
+       the generating machine happened to have. The CA rules $(AnalysisMode) leaves unconfigured are
+       named in .editorconfig instead, as stable text.
+
+       A global config deliberately LOSES to .editorconfig for any file .editorconfig matches, so
+       every deliberate relaxation lives in the root .editorconfig or test/.editorconfig next to the
+       reason for it, and survives the next regeneration. That is the whole point of the split: this
+       file says "everything", and the .editorconfig files say "except, because". -->
+  <ItemGroup>
+    <EditorConfigFiles Include="$(MSBuildThisFileDirectory)eng/analyzers/all-rules.globalconfig" />
   </ItemGroup>
 
   <ItemGroup>

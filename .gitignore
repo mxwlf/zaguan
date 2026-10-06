@@ -467,3 +467,22 @@ logs/
 # Lock files (keep language-specific ones if desired)
 # package-lock.json  # uncomment to ignore npm lock file
 # yarn.lock          # uncomment to ignore Yarn lock file
+
+# ------------------------------------------------------------------------------
+# Project-specific re-inclusions
+# ------------------------------------------------------------------------------
+# Negations, so they must come after the rules above that they undo.
+
+# launchSettings.json is normally personal, and the AppHost's is not. It pins the
+# dashboard URL and the two endpoints Aspire's tooling connects back on
+# (ASPIRE_DASHBOARD_OTLP_ENDPOINT_URL, ASPIRE_RESOURCE_SERVICE_ENDPOINT_URL), so
+# without it every clone gets different ports.
+#
+# It also decides how an IDE launches the AppHost. With no launch profile to read,
+# Rider's Aspire plugin falls back to treating AppHost.cs as a C# FILE-BASED app and
+# builds a synthesized single-file project in its own cache directory — one that has
+# no Aspire.AppHost.Sdk, no PackageReference and no ProjectReference, so it cannot
+# resolve DistributedApplication and the run fails with "Probably build process
+# failed". The file was previously ignored here, so the working copy worked and a
+# fresh clone would not.
+!src/hosts/aspire/aspire.AppHost/Properties/launchSettings.json

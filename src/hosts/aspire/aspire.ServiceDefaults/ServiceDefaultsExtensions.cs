@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+
 using OpenTelemetry;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
@@ -43,7 +44,7 @@ public static class ServiceDefaultsExtensions
 
         builder.Services.AddServiceDiscovery();
 
-        builder.Services.ConfigureHttpClientDefaults(http =>
+        builder.Services.ConfigureHttpClientDefaults(static http =>
         {
             // Turn on resilience by default
             http.AddStandardResilienceHandler();
@@ -64,20 +65,20 @@ public static class ServiceDefaultsExtensions
     /// <returns><paramref name="builder"/>, so calls can be chained.</returns>
     public static TBuilder ConfigureOpenTelemetry<TBuilder>(this TBuilder builder) where TBuilder : IHostApplicationBuilder
     {
-        builder.Logging.AddOpenTelemetry(logging =>
+        builder.Logging.AddOpenTelemetry(static logging =>
         {
             logging.IncludeFormattedMessage = true;
             logging.IncludeScopes = true;
         });
 
         builder.Services.AddOpenTelemetry()
-            .WithMetrics(metrics => metrics
+            .WithMetrics(static metrics => metrics
                 .AddAspNetCoreInstrumentation()
                 .AddHttpClientInstrumentation()
                 .AddRuntimeInstrumentation())
             .WithTracing(tracing => tracing
                 .AddSource(builder.Environment.ApplicationName)
-                .AddAspNetCoreInstrumentation(options => options.Filter = static context => !IsHealthCheckRequest(context))
+                .AddAspNetCoreInstrumentation(static options => options.Filter = static context => !IsHealthCheckRequest(context))
                 .AddHttpClientInstrumentation());
 
         builder.AddOpenTelemetryExporters();
@@ -133,10 +134,12 @@ public static class ServiceDefaultsExtensions
     {
         var useOtlpExporter = !string.IsNullOrWhiteSpace(builder.Configuration["OTEL_EXPORTER_OTLP_ENDPOINT"]);
 
-        if (useOtlpExporter)
+        if (!useOtlpExporter)
         {
-            builder.Services.AddOpenTelemetry().UseOtlpExporter();
+            return;
         }
+
+        builder.Services.AddOpenTelemetry().UseOtlpExporter();
     }
 
     // Health check traffic is a machine polling on a timer, so tracing it would bury the requests

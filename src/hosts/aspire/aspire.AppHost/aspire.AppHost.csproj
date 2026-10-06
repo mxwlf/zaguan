@@ -6,6 +6,22 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AspireUseCliBundle>true</AspireUseCliBundle>
+
+    <!-- Resolve the Aspire CLI through `dnx` instead of from PATH, so the CLI that supplies DCP
+         and the dashboard is the one this repository pins rather than whatever the machine has
+         installed. `Dnx` is the ONE mode that reads the unversioned `Aspire.Cli` package and so
+         honours .config/dotnet-tools.json, which pins 13.6.0; `make tools` restores it. Every
+         other mode, the `Path` default included, appends @$(AspireHostingSDKVersion) and ignores
+         the manifest. See https://aspire.dev/get-started/aspire-sdk/#running-with-dotnet-run.
+
+         This property and the manifest pin are a PAIR — without the pin this mode floats to the
+         latest published Aspire.Cli, because the unversioned package is what makes the manifest
+         readable at all. The pin is also a second place carrying 13.6.0, after the SDK version in
+         the Project element above; move them together. A manifest left behind pairs an older
+         CLI's DCP and dashboard with a newer hosting SDK, which shows up as ASPIRE009 or a
+         version-skew failure at startup rather than as a build error naming the manifest. -->
+    <AspireCliInvocationMode>Dnx</AspireCliInvocationMode>
+
     <UserSecretsId>2dceb9a7-95b2-44fd-8e73-40400e8895a5</UserSecretsId>
   </PropertyGroup>
 

@@ -20,10 +20,29 @@ dotnet_diagnostic.MA0004.severity = none
 # compiling after the library renamed its parameter, silently weakening the assertion.
 dotnet_diagnostic.CA1507.severity = none
 
-# A test method's name and its `// Arrange // Act // Assert` body say what it does; an XML summary
-# on each of them would restate the name in a sentence. The test project only generates a doc file
-# so that IDE0005 can run at all — see the comment on $(GenerateDocumentationFile) in
-# library.example.tests.unit.csproj — and nothing reads the result, so the missing-doc warning that
-# comes with it has no audience here. It stays on for the shipping library, where the doc file is
-# packed into the .nupkg.
-dotnet_diagnostic.CS1591.severity = none
+
+# The all-rules default in eng/analyzers/all-rules.globalconfig switches on every rule of every
+# analyzer. The relaxations below are the ones that only make sense for test code; each is the test
+# counterpart of something the shipping library is still held to.
+
+# Two more rules saying what CA2007 and MA0004 above already say, from the Roslynator and VS
+# threading sets. A test method has no synchronization context to avoid, and
+# ConfigureAwait on every await would bury the one line that is the Act phase.
+dotnet_diagnostic.RCS1090.severity = none
+dotnet_diagnostic.VSTHRD111.severity = none
+
+# Test names are `{method}_When{inputs}_Then{expectation}`. The method under test being async says
+# nothing about the test, and an `Async` suffix on `IsItGoodToWalkAsync_WhenTheZipCode..._Then...`
+# would describe the subject rather than the test. Same reason CA1707 is off above.
+dotnet_diagnostic.RCS1046.severity = none
+
+# `null!` is the subject of a test here, not an escape hatch: the constructor's null guards are
+# behaviour the suite asserts on, and passing null to a non-nullable parameter is the only way to
+# assert it. The library itself is still held to MA0191.
+dotnet_diagnostic.MA0191.severity = none
+
+# The `because` argument of an assertion is a full sentence explaining why the expectation is what
+# it is, and it is read in the failure output, where a line break would not help. Splitting one
+# across concatenated literals costs the ability to grep for the sentence. Production code is still
+# held to the 200-character limit.
+dotnet_diagnostic.S103.severity = none

@@ -1,0 +1,13 @@
+<!-- Stops the upward search for the root Directory.Packages.props, so central package management is
+     off for the tool in this folder and its `#:package` directive can carry its own version. -->
+<Project>
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+    <!-- No lock file for the tool. The product projects commit theirs, because a reproducible
+         restore is part of what they ship; this one pins a single analyzer-reading package for a
+         generator that runs on demand, and NuGet rewrites the file without a trailing newline every
+         time it runs — which the end-of-file-fixer pre-commit hook then corrects, so committing it
+         would mean a spurious one-line diff after every `make analyzers-sync`. -->
+    <RestorePackagesWithLockFile>false</RestorePackagesWithLockFile>
+  </PropertyGroup>
+</Project>
