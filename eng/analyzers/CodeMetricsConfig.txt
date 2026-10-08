@@ -1,0 +1,28 @@
+# Thresholds for the CA code-metrics rules, which ship disabled and are switched on explicitly in
+# .editorconfig. The analyzer looks for an AdditionalFile named exactly CodeMetricsConfig.txt; the
+# item that supplies it is in Directory.Build.props. CA1509 reports a malformed line here, so a typo
+# in this file fails the build rather than being ignored.
+#
+# Format is `RULE_ID: VALUE`, optionally scoped as `RULE_ID(SYMBOL_KIND): VALUE`.
+#
+# The values are deliberately stricter than the analyzer's own defaults, which were chosen to be
+# inoffensive on existing code rather than to describe code worth maintaining. A template starts
+# with no code, so it is the one moment where a real bar costs nothing to adopt; the numbers are
+# cheap to raise later with a note saying why, and painful to lower into.
+
+# Cyclomatic complexity, per method. Default 25, which is a method no one can hold in their head.
+# 15 still allows a long switch; it refuses a method with fifteen independent reasons to branch.
+CA1502: 15
+
+# Maintainability index, per method - a 0-100 composite where LOWER is worse, so this is a floor
+# rather than a ceiling. Default 10 flags only the genuinely unreadable. 20 catches a method while
+# it is merely getting away from you.
+CA1505: 20
+
+# Class coupling: distinct types referenced by one type. Default 95. 40 is still generous for a
+# composition root and tight enough to notice a domain type that has quietly become a hub.
+CA1506: 40
+
+# Depth of inheritance. Five levels below Object is already hard to follow; this is the default and
+# it is here so the number is stated rather than assumed.
+CA1501: 5

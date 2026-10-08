@@ -19,14 +19,23 @@
 #
 # WHERE EACH LAYER OF CONFIGURATION LIVES
 # ---------------------------------------
-#   * CA rules            the SDK's analysislevel_10_all.globalconfig, selected by $(AnalysisLevel)
-#                         and $(AnalysisMode) in Directory.Build.props. 280 rules at warning, with
-#                         CA1516 the single exception. Do not restate those here.
-#   * S / MA / VSTHRD     the analyzer packages' own defaults. Not configured here, because each
-#                         ships the severities its maintainers intend and they are already at or
-#                         above warning for the rules that matter.
-#   * RCS / ROS           bulk-promoted below, because Roslynator's defaults are the exception.
-#   * IDE                 this file.
+#   * CA rules            281 of the 316 from the SDK's analysislevel_10_all.globalconfig, selected
+#                         by $(AnalysisLevel) and $(AnalysisMode) in Directory.Build.props. Do not
+#                         restate those here. The other 38 ARE here, in their own section below,
+#                         because nothing else sets them and 11 ship disabled.
+#   * package analyzers   eng/analyzers/all-rules.globalconfig, generated, one explicit entry per
+#                         rule for all 1,065 of them — S, MA, RCS, VSTHRD, xUnit, NS, RS. Explicit
+#                         per rule because no bulk entry can switch on a rule its analyzer ships
+#                         disabled, and roughly a third of them are. Scoped to analyzers that
+#                         arrive as NuGet packages, whose versions are pinned; the SDK's own are
+#                         left out so the generated file does not depend on the floating SDK patch.
+#                         Do not put exceptions there: a global config loses to this file, and the
+#                         next regeneration would revert them.
+#   * IDE rules           this file, via the category-Style entry below. They are not in the
+#                         generated file because the code-style analyzers cannot be enumerated the
+#                         way the others can; they are all enabled by default anyway, so promoting
+#                         the category is enough.
+#   * all exceptions      this file, each next to the reason for it.
 #   * test-only relaxing  test/.editorconfig, which inherits everything here and turns off the few
 #                         rules that fight readable tests.
 #
@@ -80,15 +89,11 @@ indent_size = 2
 dotnet_analyzer_diagnostic.category-Style.severity = warning
 dotnet_analyzer_diagnostic.category-CodeQuality.severity = warning
 
-# Roslynator ships 182 of its 220 rules enabled, but only 15 at warning — the other 167 default to
-# `suggestion` or `silent`, which show up in Rider and vanish in CI. That made the package almost
-# decorative on a build that only fails on warnings. Promoting the category is the whole fix.
-#
-# This bulk entry does not switch on the rules Roslynator disables by default, which is the
-# behaviour wanted here: the disabled set is where its openly opinionated and mutually exclusive
-# pairs live (RCS1008 "use explicit type instead of var" against RCS1176 "use var instead of
-# explicit type", and so on). Turning those on would mean taking sides on questions this file
-# already answers through the IDE options below, and in two cases taking both sides at once.
+# Kept for Roslynator even though eng/analyzers/all-rules.globalconfig now names every RCS rule
+# explicitly: this entry still catches a rule added by a Roslynator upgrade before the generated
+# file has been refreshed, so a new rule arrives at warning rather than at whatever low severity it
+# ships with. `make analyzers-verify` is what notices the file is stale; this is the safety net for
+# the window before someone runs it.
 dotnet_analyzer_diagnostic.category-Roslynator.severity = warning
 
 # ----------------------------------------------------------------------------------------------
@@ -99,9 +104,9 @@ dotnet_analyzer_diagnostic.category-Roslynator.severity = warning
 #
 # Off, not relaxed. The rule wants every discarded expression value assigned to `_`, and nearly
 # every occurrence in this repository is a call made for its effect with a return value that is
-# genuinely uninteresting: `await sut.IsItGoodToWalkAsync(...)` in a test that asserts on the
-# substitute rather than the answer, and the NSubstitute `Received()` chains. `_ =` on each of
-# those adds a character of noise per line and no information.
+# genuinely uninteresting: an awaited call in a test that asserts on the substitute rather than on
+# the answer, and the NSubstitute `Received()` chains. `_ =` on each of those adds a character of
+# noise per line and no information.
 #
 # The dangerous case this might otherwise catch — calling a pure method and throwing the result
 # away, which means the call did nothing at all — is already CA1806, which is on at warning.
@@ -109,19 +114,18 @@ dotnet_diagnostic.IDE0058.severity = none
 
 # IDE0045/IDE0046: Use conditional expression for assignment / for return.
 #
-# A three-branch temperature-then-rain decision is clearer as if/else-if/else than as the nested
-# ternary the fix produces. Left as a suggestion so the IDE still offers it where a conditional
-# expression genuinely does read better.
+# A three-branch decision is clearer as if/else-if/else than as the nested ternary the fix produces.
+# Left as a suggestion so the IDE still offers it where a conditional expression genuinely does read
+# better.
 dotnet_diagnostic.IDE0045.severity = suggestion
 dotnet_diagnostic.IDE0046.severity = suggestion
 
 # IDE0290: Use primary constructor.
 #
-# A primary constructor cannot validate what it captures. GoodToWalkService's constructor exists to
-# reject a null dependency at construction time instead of failing later on every call, which is
-# behaviour its tests assert on, and the generated form has nowhere to put the throw. A suggestion
-# rather than off, because for a type that only stores its parameters — as the test class does — the
-# rule is right.
+# A primary constructor cannot validate what it captures. A constructor that rejects a null
+# dependency at construction time, instead of failing later on every call, has nowhere to put the
+# throw in the generated form. A suggestion rather than off, because for a type that only stores its
+# parameters the rule is right.
 dotnet_diagnostic.IDE0290.severity = suggestion
 
 # RCS1181: Convert comment to documentation comment.
@@ -157,22 +161,37 @@ csharp_style_namespace_declarations = file_scoped
 # as editor-only refactorings — setting either to `warning` explicitly was verified to report
 # nothing on a file that qualified its field writes — so what these entries actually drive is the
 # IDE and `dotnet format`. They are declared anyway so that the repository has one answer to the
-# question rather than none; GoodToWalkService used to give both.
+# question rather than none, which is what it gave before this file existed.
 dotnet_style_qualification_for_field = false
 dotnet_style_qualification_for_property = false
 dotnet_style_qualification_for_method = false
 dotnet_style_qualification_for_event = false
 
-# `using` directives: outside the namespace, System first. Group separation is deliberately left
-# unset: the two existing files disagree about it (one separates every root namespace with a blank
-# line, the other does not), and IDE0055 enforces whichever value is set, so setting either would
-# reformat one of them to settle a question with no readability answer.
+# `using` directives: outside the namespace, System first, groups separated by a blank line.
+#
+# Group separation was previously left unset because the two existing files disagreed about it, and
+# IDE0055 enforces whichever value is set. Roslynator's RCS0015 forces the question — it reports
+# ROS0003 until `roslynator_blank_line_between_using_directives` is answered — so the repository now
+# answers it once, here and above, and the source was brought into line with it.
 csharp_using_directive_placement = outside_namespace
 dotnet_sort_system_directives_first = true
+dotnet_separate_import_directive_groups = true
 
 # Modern language features where they are unambiguous wins. These match the existing code — the
 # property pattern in the temperature check, `nameof` in the argument exceptions — and are listed so
 # the preference survives someone writing the older form.
+# Expression bodies where the member fits on one line, which is what roslynator_body_style says
+# above. Accessors and lambdas included; constructors and operators are left to the block form,
+# where an expression body hides the fact that initialization is happening.
+csharp_style_expression_bodied_methods = when_on_single_line
+csharp_style_expression_bodied_local_functions = when_on_single_line
+csharp_style_expression_bodied_properties = when_on_single_line
+csharp_style_expression_bodied_indexers = when_on_single_line
+csharp_style_expression_bodied_accessors = when_on_single_line
+csharp_style_expression_bodied_lambdas = when_on_single_line
+csharp_style_expression_bodied_constructors = false
+csharp_style_expression_bodied_operators = false
+
 csharp_style_pattern_matching_over_is_with_cast_check = true
 csharp_style_pattern_matching_over_as_with_null_check = true
 csharp_prefer_braces = true
@@ -270,6 +289,358 @@ dotnet_naming_style.i_prefixed_pascal_case.required_prefix = I
 
 dotnet_naming_style.t_prefixed_pascal_case.capitalization = pascal_case
 dotnet_naming_style.t_prefixed_pascal_case.required_prefix = T
+# ----------------------------------------------------------------------------------------------
+# Roslynator options the strict rule set requires
+#
+# Four Roslynator rules refuse to run until the repository states its preference, and say so as
+# ROS0003 rather than staying quiet. Answering them is the point of enabling them.
+# ----------------------------------------------------------------------------------------------
+
+# RCS1018. Every declaration in this repository spells its accessibility out; `dotnet_style_
+# require_accessibility_modifiers` above says the same thing to the IDE analyzers.
+roslynator_accessibility_modifiers = explicit
+
+# RCS1050, and only when there is an object initializer — the language already requires the
+# parentheses when there is not. `new Thing { ... }` reads better than `new Thing() { ... }`, where
+# the empty pair sits between the type and its values saying nothing.
+roslynator_object_creation_parentheses_style = omit
+
+# RCS1051. Parentheses around a conditional's condition are noise when precedence already makes it
+# unambiguous, and the compiler does not need them.
+roslynator_conditional_operator_condition_parentheses_style = omit
+
+# RCS1207. A method group reads as the name of the thing being called; a lambda that does nothing
+# but forward its arguments restates the signature to say the same thing.
+roslynator_use_anonymous_function_or_method_group = method_group
+
+# RCS1016, together with the two `use_block_body_when_*_spans_over_multiple_lines` options above:
+# an expression body when the member fits on one line, a block body as soon as it does not. The
+# `csharp_style_expression_bodied_*` entries below say the same thing to IDE0021-IDE0027.
+#
+# Chosen deliberately rather than inherited: the first version of this file said `block` because the
+# four files in the example library happened to be block-bodied, which made the template impose an
+# accident of its own sample on everything derived from it. `=>` for a one-line member is the
+# mainstream .NET convention and the one that needs no reformatting to adopt.
+roslynator_body_style = expression
+
+# RCS1090. ConfigureAwait(false) on every await in library code, which is what CA2007 and MA0004
+# already require here — and what test/.editorconfig switches off for test code, where there is no
+# synchronization context worth avoiding.
+roslynator_configure_await = true
+
+# RCS1254. No enum in the repository uses flags yet; `1 << 0, 1 << 1, 1 << 2` is chosen over
+# `1, 2, 4` because the shift makes the bit position explicit and does not need recomputing by hand
+# when a member is inserted.
+roslynator_enum_flag_value_style = shift_operator
+
+# RCS1078. `""` over `string.Empty`: it is a compile-time constant, so the same spelling works in an
+# attribute argument, a constant pattern and a default parameter value, where the static field does
+# not compile.
+roslynator_empty_string_style = literal
+
+# RCS1248. `is null` over `== null`, matching `dotnet_style_prefer_is_null_check_over_reference_
+# equality_method` above. The pattern cannot be intercepted by an overloaded `==`, so it asks the
+# question it appears to ask even on a type that redefines equality.
+roslynator_null_check_style = pattern_matching
+
+# The rest of Roslynator's options, set so that ROS0003 cannot come back. Roslynator reveals these
+# a few at a time — a rule only reports its missing option once it is reached — so answering the
+# whole list at once is the only way to converge. Every value below either matches what the
+# repository already does or, where there was no precedent, states the choice for the first time.
+
+# Layout. A binary operator ends the line it continues from, while a ternary's `?` and `:` begin
+# theirs.
+roslynator_binary_operator_new_line = after
+roslynator_conditional_operator_new_line = before
+roslynator_equals_token_new_line = after
+roslynator_arrow_token_new_line = after
+roslynator_null_conditional_operator_new_line = before
+roslynator_accessor_braces_style = single_line_when_expression_is_on_single_line
+roslynator_block_braces_style = single_line_when_empty
+roslynator_new_line_at_end_of_file = true
+roslynator_new_line_before_while_in_do_statement = true
+roslynator_blank_line_after_file_scoped_namespace_declaration = true
+roslynator_blank_line_between_switch_sections = true
+roslynator_blank_line_between_closing_brace_and_switch_section = true
+roslynator_blank_line_between_single_line_accessors = false
+roslynator_trailing_comma_style = include_when_multiline
+roslynator_tab_length = 4
+roslynator_max_line_length = 200
+
+# `using` groups separated by a blank line, which is what the test file already does and what this
+# repository now does everywhere; `dotnet_separate_import_directive_groups` below says the same to
+# IDE0055, and the source was brought into line rather than the rule bent around it.
+roslynator_blank_line_between_using_directives = separate_groups
+
+# Style. `var` throughout and a collection expression where one fits, matching the
+# `csharp_style_var_*` settings below; the type is named only where inference cannot see it.
+roslynator_use_var = always
+roslynator_use_var_instead_of_implicit_object_creation = true
+roslynator_use_collection_expression = true
+roslynator_object_creation_type_style = implicit_when_type_is_obvious
+roslynator_array_creation_type_style = implicit_when_type_is_obvious
+roslynator_prefix_field_identifier_with_underscore = true
+roslynator_use_block_body_when_declaration_spans_over_multiple_lines = true
+roslynator_use_block_body_when_expression_spans_over_multiple_lines = true
+
+# `(flags & Flag.X) != 0` over `flags.HasFlag(Flag.X)`, which boxes its argument, and `while (true)`
+# over `for (;;)`, which says the same thing with punctuation.
+roslynator_enum_has_flag_style = operator
+roslynator_infinite_loop_style = while
+
+# Multi-line `/// <summary>`, the same answer MA0177 is switched off for below: it is what the .NET
+# libraries use and what every doc comment here already does.
+roslynator_doc_comment_summary_style = multi_line
+
+# ----------------------------------------------------------------------------------------------
+# Relaxations forced by the all-rules default
+#
+# With every rule of every analyzer switched on by eng/analyzers/all-rules.globalconfig, the rules
+# below are the ones that are wrong for THIS repository rather than wrong in general. Each is off
+# with the reason, and each will survive the next regeneration of that file because .editorconfig
+# wins over a global config.
+#
+# Nothing here is off because it was inconvenient. Where the strict default found something real
+# it was fixed in the code instead: an equality check became a pattern match, a magic number became
+# a named constant, and CA1017/S3992 became the assembly attributes in Directory.Build.targets.
+# ----------------------------------------------------------------------------------------------
+
+# MA0215 and RCS1174: return the task instead of awaiting it / remove redundant async-await.
+#
+# Eliding the await drops the method's own frame from the stack trace of anything that fails
+# inside it, and moves an argument exception from the synchronous part of the call to the returned
+# task, so the caller sees it only on await. Both matter more to a service that has to be debugged
+# from a log line than one state-machine allocation does. The case that settles it is a method that
+# validates its arguments, returns an awaited call on one path and throws on the other: eliding the
+# await moves that throw from the call into the returned task, so the caller sees it only on await.
+dotnet_diagnostic.MA0215.severity = none
+dotnet_diagnostic.RCS1174.severity = none
+
+# RCS1002 and RCS1004: remove braces / remove braces from if-else.
+#
+# A direct contradiction of `csharp_prefer_braces = true` above, which IDE0011 enforces. Braces
+# always — the single-statement `if` without them is where a later edit silently adds a second
+# statement outside the branch — so these two have to go; keeping both rules would mean the build
+# demanding every edit be undone.
+dotnet_diagnostic.RCS1002.severity = none
+dotnet_diagnostic.RCS1004.severity = none
+
+# MA0177 and MA0219: single-line XML comment syntax / set the language attribute.
+#
+# The multi-line `/// <summary>` form is what the .NET libraries use and what every doc comment here
+# already uses, and `<c>0.25</c>` does not become clearer as `<c lang="csharp">0.25</c>`. These are
+# house-style questions where this house has already answered differently.
+dotnet_diagnostic.MA0177.severity = none
+dotnet_diagnostic.MA0219.severity = none
+
+# S1309: do not suppress issues.
+#
+# This forbids `#pragma warning disable` outright, which would make a documented, narrowly scoped
+# suppression impossible — including a narrow `disable CA1848` around a call site where the ILogger
+# extension methods are the right choice and a comment says why. A suppression that carries its
+# reason is the mechanism working, not a smell, and IDE0079 still removes suppressions that have
+# stopped suppressing anything.
+dotnet_diagnostic.S1309.severity = none
+
+# S1312: make the logger private static readonly.
+#
+# Right for a static logger obtained from a factory, wrong for an injected one. ILogger<T> arrives
+# through the constructor, belongs to the instance, and cannot be static without abandoning
+# dependency injection for the one dependency every type has.
+dotnet_diagnostic.S1312.severity = none
+
+# S3242: use the more general type ILogger instead of ILogger<T>.
+#
+# ILogger<T> is the type the container registers and the thing that gives log entries their
+# category. Widening the parameter to ILogger would make the type unresolvable by DI and silently
+# drop the category from every message it writes.
+dotnet_diagnostic.S3242.severity = none
+
+# S1451: add or update the header of this file.
+#
+# The licence is stated once, in LICENSE at the root, and again in $(PackageLicenseExpression) so it
+# reaches the package metadata. A copy in a comment at the top of every file is a third statement
+# that no tool checks and that goes stale on the next relicence or year change.
+dotnet_diagnostic.S1451.severity = none
+
+# S4055: replace this string literal with one from a ResourceManager.
+#
+# This repository ships one language. Routing exception messages and log templates through a
+# ResourceManager would add a resource lookup, a .resx to keep in step and an indirection in every
+# message, to localize text that has no second locale to be localized into.
+dotnet_diagnostic.S4055.severity = none
+
+# RCS1223: mark the type with DebuggerDisplay.
+#
+# Worth it for a type with enough state that the debugger's default rendering is unhelpful. Applied
+# to every DTO — two properties and nothing else — it is attribute noise on the declaration.
+dotnet_diagnostic.RCS1223.severity = none
+# ----------------------------------------------------------------------------------------------
+# The CA rules <AnalysisMode>All</AnalysisMode> does not reach
+#
+# The SDK implements that property as a global config of explicit per-rule entries, and it covers
+# 281 of the 316 CA ids the analyzer ships. The other 38 are listed here because nothing else sets
+# them, and 11 of those are shipped DISABLED - so without this block they never ran, however strict
+# the rest of the configuration looked.
+#
+# Written out by hand rather than generated, deliberately. eng/analyzers/all-rules.globalconfig is
+# generated from the analyzers the projects resolve, and it covers only the ones that arrive as
+# NuGet packages, whose versions are pinned by Directory.Packages.props and the lock files. The CA
+# analyzer ships inside the SDK, and global.json floats the SDK patch (`rollForward: latestPatch`),
+# so generating these made the committed file depend on which patch the machine happened to have:
+# it was produced on 10.0.203 and CI resolved 10.0.204, and `make analyzers-verify` failed with
+# nothing a developer could usefully do about it. Stable text has no such problem.
+#
+# The trade is explicit: if a later SDK ships a CA rule that it also leaves unconfigured, that rule
+# sits at its own default until someone adds it here. That is a gap rather than a broken build,
+# which is the right way round. CA1516 is absent on purpose - the SDK sets it to `none` and that
+# decision is theirs to make.
+# ----------------------------------------------------------------------------------------------
+
+# Code metrics: inheritance depth, cyclomatic complexity, maintainability index and class coupling.
+# All four ship disabled, which is why a codebase can grow a 40-dependency entry point without ever
+# being told. Thresholds come from eng/analyzers/CodeMetricsConfig.txt; CA1509 reports a malformed
+# entry in it.
+dotnet_diagnostic.CA1501.severity = warning
+dotnet_diagnostic.CA1502.severity = warning
+dotnet_diagnostic.CA1505.severity = warning
+dotnet_diagnostic.CA1506.severity = warning
+dotnet_diagnostic.CA1509.severity = warning
+
+# Legacy FxCop API-design rules, all shipped disabled. They constrain a public surface that other
+# languages and COM can consume, which is exactly the bar a library published to a feed should
+# meet. CA1014 and CA1017 are satisfied by the assembly attributes in Directory.Build.targets.
+dotnet_diagnostic.CA1005.severity = warning
+dotnet_diagnostic.CA1014.severity = warning
+dotnet_diagnostic.CA1017.severity = warning
+dotnet_diagnostic.CA1021.severity = warning
+dotnet_diagnostic.CA1045.severity = warning
+dotnet_diagnostic.CA1060.severity = warning
+
+# The remaining 27. These are already enabled by default, so this block is not switching them on -
+# it pins the severity so that a change to an analyzer's own default cannot quietly demote one.
+# Platform compatibility (CA1416-CA1422), the P/Invoke and span correctness rules, and the `await`
+# and exception-rethrow checks are all here.
+dotnet_diagnostic.CA1416.severity = warning
+dotnet_diagnostic.CA1417.severity = warning
+dotnet_diagnostic.CA1418.severity = warning
+dotnet_diagnostic.CA1420.severity = warning
+dotnet_diagnostic.CA1422.severity = warning
+dotnet_diagnostic.CA1831.severity = warning
+dotnet_diagnostic.CA1857.severity = warning
+dotnet_diagnostic.CA2013.severity = warning
+dotnet_diagnostic.CA2014.severity = warning
+dotnet_diagnostic.CA2015.severity = warning
+dotnet_diagnostic.CA2017.severity = warning
+dotnet_diagnostic.CA2018.severity = warning
+dotnet_diagnostic.CA2021.severity = warning
+dotnet_diagnostic.CA2022.severity = warning
+dotnet_diagnostic.CA2023.severity = warning
+dotnet_diagnostic.CA2024.severity = warning
+dotnet_diagnostic.CA2200.severity = warning
+dotnet_diagnostic.CA2247.severity = warning
+dotnet_diagnostic.CA2255.severity = warning
+dotnet_diagnostic.CA2256.severity = warning
+dotnet_diagnostic.CA2257.severity = warning
+dotnet_diagnostic.CA2258.severity = warning
+dotnet_diagnostic.CA2259.severity = warning
+dotnet_diagnostic.CA2260.severity = warning
+dotnet_diagnostic.CA2261.severity = warning
+dotnet_diagnostic.CA2264.severity = warning
+dotnet_diagnostic.CA2265.severity = warning
+
+# ----------------------------------------------------------------------------------------------
+# The ASP.NET Core and Blazor analyzers, pinned here for the same reason as the CA block above
+#
+# These ship with the Web SDK and the ASP.NET Core shared framework rather than as NuGet packages,
+# so eng/analyzers/all-rules.globalconfig does not cover them: it is scoped to analyzers whose
+# versions are pinned, and these move with the SDK. Same trade as the CA block — stable text, in
+# exchange for a list that has to be extended by hand.
+#
+# All 44 of them, enumerated by reflecting over the analyzer assemblies the compiler actually
+# loads. That is worth saying because the obvious source is wrong: the generated file only ever
+# listed nine of these, because @(ResolvedAnalyzers) and @(Analyzer) between them do not surface the
+# ones that arrive through the targeting pack — Microsoft.AspNetCore.App.Analyzers, which carries
+# ASP0003 to ASP0028, and Microsoft.AspNetCore.Components.Analyzers, which carries BL0001 to BL0009,
+# were never queried at all. Taking the generated file as the inventory undercounted by 35 rules.
+#
+# Inert until a project uses the Web SDK — an entry for a rule whose analyzer is not loaded is
+# ignored with no diagnostic, which was verified rather than assumed. So this costs nothing in a
+# repository with no web project, and is already right in one that grows its first.
+# ----------------------------------------------------------------------------------------------
+
+# The five that ship at `Info`, which never fails a build however strict the rest of the setup is.
+# These are the only entries in this block that change what the compiler does today; the rest pin a
+# severity that already applied.
+dotnet_diagnostic.ASP0015.severity = warning
+dotnet_diagnostic.ASP0018.severity = warning
+dotnet_diagnostic.ASP0025.severity = warning
+dotnet_diagnostic.ASP0027.severity = warning
+dotnet_diagnostic.ASP0028.severity = warning
+
+# Shipped at warning already. Listed so that a change to an analyzer's own default cannot quietly
+# demote one of them below the level this build fails at.
+dotnet_diagnostic.ASP0000.severity = warning
+dotnet_diagnostic.ASP0001.severity = warning
+dotnet_diagnostic.ASP0003.severity = warning
+dotnet_diagnostic.ASP0004.severity = warning
+dotnet_diagnostic.ASP0005.severity = warning
+dotnet_diagnostic.ASP0006.severity = warning
+dotnet_diagnostic.ASP0007.severity = warning
+dotnet_diagnostic.ASP0011.severity = warning
+dotnet_diagnostic.ASP0012.severity = warning
+dotnet_diagnostic.ASP0013.severity = warning
+dotnet_diagnostic.ASP0014.severity = warning
+dotnet_diagnostic.ASP0016.severity = warning
+dotnet_diagnostic.ASP0017.severity = warning
+dotnet_diagnostic.ASP0019.severity = warning
+dotnet_diagnostic.ASP0022.severity = warning
+dotnet_diagnostic.ASP0023.severity = warning
+dotnet_diagnostic.ASP0026.severity = warning
+dotnet_diagnostic.MVC1000.severity = warning
+dotnet_diagnostic.MVC1001.severity = warning
+dotnet_diagnostic.MVC1002.severity = warning
+dotnet_diagnostic.MVC1003.severity = warning
+dotnet_diagnostic.MVC1004.severity = warning
+dotnet_diagnostic.MVC1005.severity = warning
+dotnet_diagnostic.BL0002.severity = warning
+dotnet_diagnostic.BL0003.severity = warning
+dotnet_diagnostic.BL0005.severity = warning
+dotnet_diagnostic.BL0006.severity = warning
+dotnet_diagnostic.BL0007.severity = warning
+dotnet_diagnostic.BL0008.severity = warning
+dotnet_diagnostic.BL0009.severity = warning
+
+# Shipped as errors, and kept there. Writing `warning` for these would be a downgrade, and nothing
+# in this configuration is allowed to lower a bar by accident.
+dotnet_diagnostic.ASP0008.severity = error
+dotnet_diagnostic.ASP0009.severity = error
+dotnet_diagnostic.ASP0010.severity = error
+dotnet_diagnostic.ASP0020.severity = error
+dotnet_diagnostic.ASP0021.severity = error
+dotnet_diagnostic.ASP0024.severity = error
+dotnet_diagnostic.BL0001.severity = error
+dotnet_diagnostic.BL0004.severity = error
+dotnet_diagnostic.MVC1006.severity = error
+# Aspire's service defaults, which are a composition root.
+#
+# CA1506 counts the distinct types a type references, and this one wires up OpenTelemetry logging,
+# metrics and tracing, health checks, service discovery and the standard resilience handler. Being
+# coupled to 47 types from 33 namespaces is what the file is FOR: every one of those references is
+# a service being registered, and the number goes up with each integration the host adopts. The
+# threshold in eng/analyzers/CodeMetricsConfig.txt stays where it is for code that has a choice.
+#
+# Scoped by filename rather than by path so a project rename does not quietly re-enable it, and set
+# to `none` rather than `suggestion` because there is no action to take — the alternative is
+# splitting registration across files to make a metric smaller, which buys nothing a reader wants.
+[**/ServiceDefaultsExtensions.cs]
+dotnet_diagnostic.CA1506.severity = none
+
+
+
+
+
+
 
 # Generated code, which this repository did not write and cannot fix.
 #

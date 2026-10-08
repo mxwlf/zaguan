@@ -1,11 +1,13 @@
 <Solution>
-  <Folder Name="/solutionfiles/">
-    <File Path="Directory.Build.props" />
-    <File Path="Directory.Build.targets" />
+  <Folder Name="/sln items/">
     <File Path="Directory.Packages.props" />
   </Folder>
   <Folder Name="/src/">
     <Project Path="src/library.example/library.example.csproj" />
+  </Folder>
+  <Folder Name="/src/hosts/">
+    <Project Path="src/hosts/aspire/aspire.AppHost/aspire.AppHost.csproj" />
+    <Project Path="src/hosts/aspire/aspire.ServiceDefaults/aspire.ServiceDefaults.csproj" />
   </Folder>
   <Folder Name="/test/" />
   <Folder Name="/test/unit/">

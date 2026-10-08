@@ -25,4 +25,52 @@
   <PropertyGroup Condition="'$(IsPackable)' == 'true'">
     <EnablePackageValidation>true</EnablePackageValidation>
   </PropertyGroup>
+
+  <!-- Two assembly-level declarations that the strict rule set asks every assembly for, satisfying
+       CA1014/S3990 (CLSCompliant) and CA1017/S3992 (ComVisible). They are emitted here rather than
+       written into an AssemblyInfo.cs per project so that a new project inherits them.
+
+       ComVisible(false) is the safe default for managed code: it keeps types out of the COM type
+       library unless a type opts in, which is what almost every .NET assembly wants.
+
+       CLSCompliant(true) is a promise about the PUBLIC surface — that a consumer written in any .NET
+       language can use it — so the compiler starts checking the public API against the CLS rules
+       (CS3001 and friends) once it is set. That promise is only meaningful for an assembly someone
+       else consumes, and only testable against a public surface, so it is scoped to projects that
+       ship. A test project or an app host has no external consumer and declaring it there would
+       assert something nobody can rely on. $(IsPackable) is final by the time this file is imported,
+       which is why this lives in .targets and not .props. -->
+  <ItemGroup>
+    <!-- _Parameter1_IsLiteral keeps the value unquoted in the generated AssemblyInfo.cs. Without it
+         MSBuild writes ComVisible("false") and the compiler rejects it with CS1503. -->
+    <AssemblyAttribute Include="System.Runtime.InteropServices.ComVisible">
+      <_Parameter1>false</_Parameter1>
+      <_Parameter1_IsLiteral>true</_Parameter1_IsLiteral>
+    </AssemblyAttribute>
+    <AssemblyAttribute Include="System.CLSCompliant" Condition="'$(IsPackable)' == 'true'">
+      <_Parameter1>true</_Parameter1>
+      <_Parameter1_IsLiteral>true</_Parameter1_IsLiteral>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+  <!-- The other half of the CLSCompliant decision above. CA1014 and S3990 ask every assembly for the
+       attribute, and they report it against the assembly rather than against a file — the diagnostic
+       comes out as `CSC : warning CA1014` with no path — so an .editorconfig section cannot reach
+       them however it is scoped. $(NoWarn) is the only lever, and it carries the same $(IsPackable)
+       guard as the attribute so the two cannot drift apart: an assembly either makes the promise or
+       is not asked for it.
+
+       CS1591, the missing-XML-doc warning, rides along on the same guard for a related reason.
+       $(GenerateDocumentationFile) is true for EVERY project in Directory.Build.props, and not
+       because anything reads the .xml: IDE0005 (remove unnecessary usings) cannot run without it,
+       because the unused-import analysis is a by-product of the doc-comment binding pass, and
+       Roslyn reports that it skipped the rule as the `EnableGenerateDocumentationFile` advisory —
+       which $(TreatWarningsAsErrors) turns into a Release error. Nothing else in the analyzer set
+       catches an unused using; SonarAnalyzer's S1128 is one of the rules it ships disabled, so
+       turning the doc file off trades the error for silence. So the file is always generated, and
+       the demand for a comment on every public member applies only where there is a consumer to
+       read it. See https://github.com/dotnet/roslyn/issues/41640. -->
+  <PropertyGroup Condition="'$(IsPackable)' != 'true'">
+    <NoWarn>$(NoWarn);CA1014;S3990;CS1591</NoWarn>
+  </PropertyGroup>
 </Project>

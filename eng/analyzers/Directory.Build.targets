@@ -1,0 +1,4 @@
+<!-- Empty, for the same reason as Directory.Build.props beside it: it stops MSBuild's upward search
+     so the root Directory.Build.targets does not apply to the tool in this folder. -->
+<Project>
+</Project>

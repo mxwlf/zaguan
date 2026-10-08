@@ -8,19 +8,6 @@
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
 
-    <!-- The doc file this produces is never read by anyone and never shipped. It is generated
-         because IDE0005 (remove unnecessary usings) cannot run without it: the unused-import
-         analysis is a by-product of the doc-comment binding pass, so Roslyn skips the rule when no
-         doc file is asked for and reports that it did — as the `EnableGenerateDocumentationFile`
-         advisory, which $(TreatWarningsAsErrors) turns into a Release error. See
-         https://github.com/dotnet/roslyn/issues/41640.
-         Setting this to false instead would trade that error for silence: nothing else in the
-         analyzer set catches an unused using (SonarAnalyzer's S1128 is one of the rules it ships
-         disabled), so the rule would simply stop working here.
-         CS1591, the missing-doc-comment warning this turns on, is switched off for test code in
-         test/.editorconfig rather than here. -->
-    <GenerateDocumentationFile>true</GenerateDocumentationFile>
-
     <!-- Makes Microsoft.Testing.Platform the default mode of the built executable. Without this,
          xunit generates an entry point that only hands the command line to MTP when it already
          looks like an MTP one (it sniffs for the `server` switch that `dotnet test` passes) and

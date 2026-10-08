@@ -33,7 +33,7 @@
 
 .DEFAULT_GOAL := help
 
-SOLUTION := dotnet-template.slnx
+SOLUTION := zaguan.slnx
 CONFIGURATION ?= Release
 ARTIFACTS_DIR ?= artifacts
 # Versioning is NOT a make variable: it is derived from git history by Nerdbank.GitVersioning,
@@ -65,14 +65,16 @@ PRE_COMMIT := $(VENV_BIN)/pre-commit
 VENV_STAMP := $(VENV)/.requirements-installed
 
 RULESETS := ./scripts/github-rulesets.sh
+DASHBOARD_OPENER := ./scripts/open-aspire-dashboard.sh
+APPHOST := src/hosts/aspire/aspire.AppHost/aspire.AppHost.csproj
 
-.PHONY: setup venv ci lint pre-commit clean check-python check-dotnet help tools build test coverage pack sbom prune-stale-output \
+.PHONY: setup venv ci lint pre-commit clean check-python check-dotnet check-aspire install-aspire help tools run build test coverage pack sbom prune-stale-output \
         rulesets-apply rulesets-diff rulesets-export
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
 
-setup: venv ## Create the local virtualenv and configure the repo's git config + hooks
+setup: venv install-aspire ## Create the local virtualenv, install the pinned aspire CLI, and configure the repo's git config + hooks
 	git config --local include.path ../.gitconfig
 	$(PRE_COMMIT) install-hooks
 
@@ -117,6 +119,101 @@ check-dotnet: ## Verify an installed .NET SDK satisfies the version pinned in gl
 	}
 
 # ---------------------------------------------------------------------------
+# LOCAL DEVELOPMENT
+# ---------------------------------------------------------------------------
+# Checked separately from `dotnet` for the same reason check-dotnet exists: the apphost sets
+# AspireUseCliBundle=true, which takes the dashboard and the orchestrator (DCP) from the installed
+# `aspire` CLI bundle instead of from per-RID NuGet packages. So the CLI is not a convenience here,
+# it is a run input. Without this guard the failure arrives much later, as an orchestration error
+# that does not mention the CLI at all.
+#
+# The version is read from the Aspire.AppHost.Sdk pin on the apphost's Project element, which is
+# the ONE place this repository states an Aspire version — unlike its sibling, there is no
+# $(AspireVersion) property, because no PackageVersion here would reference it. Extracted with sed
+# rather than by asking MSBuild, so this can run before and independently of a restore.
+ASPIRE_PINNED_VERSION := $(shell sed -n 's|.*Sdk="Aspire.AppHost.Sdk/\([^"]*\)".*|\1|p' $(APPHOST))
+
+# WHY THE VERSION IS COMPARED AND NOT JUST THE PRESENCE OF THE BINARY.
+# The CLI bundle supplies DCP and the dashboard, and the apphost is compiled against the SDK pinned
+# above. Those two have to agree, and nothing enforces it: $(AspireCliInvocationMode) is
+# deliberately left at its `Path` default — see the apphost csproj for the CI failures that ruled
+# out `Dnx`, the mechanism that used to pin the CLI from inside the repository — so the bundle comes
+# from whatever version the machine carries. One `aspire update` breaks the agreement.
+#
+# The skew does not announce itself as a version problem. It surfaces as ASPIRE009 or as a resource
+# failing to start, neither of which names the CLI, and both of which read as "the apphost is
+# broken" rather than "these two numbers differ".
+check-aspire: ## Verify the `aspire` CLI is installed and matches the pinned Aspire version
+	@command -v aspire > /dev/null 2>&1 || { \
+		echo 'Error: the `aspire` CLI was not found on your PATH.' 1>&2; \
+		echo '       The apphost sets AspireUseCliBundle=true, so the dashboard and orchestrator' 1>&2; \
+		echo '       come from the CLI bundle rather than from NuGet. Install it with:' 1>&2; \
+		echo '           dotnet tool install --global aspire.cli --version $(ASPIRE_PINNED_VERSION)' 1>&2; \
+		echo '       or run `make install-aspire`.' 1>&2; \
+		exit 1; \
+	}
+	@[ -n '$(ASPIRE_PINNED_VERSION)' ] || { \
+		echo 'Error: no Aspire.AppHost.Sdk version was found in $(APPHOST).' 1>&2; \
+		echo '       This target compares the installed CLI against it, so an empty value would' 1>&2; \
+		echo '       silently compare against nothing and pass. Restore the pin, or drop this' 1>&2; \
+		echo '       check deliberately rather than by accident.' 1>&2; \
+		exit 1; \
+	}
+	@installed="$$(aspire --version 2>/dev/null | head -n 1 | cut -d'+' -f1)"; \
+	if [ "$$installed" != '$(ASPIRE_PINNED_VERSION)' ]; then \
+		echo "Error: the installed \`aspire\` CLI is $$installed, but this repository pins $(ASPIRE_PINNED_VERSION)." 1>&2; \
+		echo '       The CLI supplies DCP and the dashboard; the apphost is built against the pinned' 1>&2; \
+		echo '       hosting SDK. A mismatch surfaces later as ASPIRE009 or a resource that will not' 1>&2; \
+		echo '       start, neither of which mentions the CLI. Fix it in whichever direction is' 1>&2; \
+		echo '       right — install the pinned CLI with `make install-aspire`, or repin the' 1>&2; \
+		echo '       Aspire.AppHost.Sdk version on the apphost Project element.' 1>&2; \
+		exit 1; \
+	fi
+	@echo 'aspire CLI $(ASPIRE_PINNED_VERSION) matches the pinned Aspire version.'
+
+# CONDITIONAL ON check-aspire FAILING, which is the whole design of this target. A developer who
+# already has the pinned CLI — however they installed it, from get.aspire.dev, a package manager, or
+# a global tool — gets nothing done to them. Installing unconditionally would put a SECOND aspire on
+# the machine, and then PATH order decides which one runs; that is a worse starting state than the
+# one it was trying to fix.
+#
+# `dotnet tool` rather than the published install script, for two reasons. It takes an exact
+# --version, so the thing installed is the thing pinned rather than whatever is current; and it
+# needs no `curl | bash`, resolving from nuget.org which this repository's nuget.config already
+# allows. `update` rather than `install` because `install` errors on an already-present tool while
+# `update` handles both the absent and the wrong-version case.
+#
+# The re-check afterwards is not ceremony. A global tool lands in ~/.dotnet/tools, and if that
+# directory is not on PATH — or is shadowed by another aspire earlier in it — the install succeeds
+# and `make run` still fails, which is exactly the silent half-success these guards exist to stop.
+install-aspire: check-dotnet ## Install the pinned `aspire` CLI unless a matching one is already present
+	@if $(MAKE) --no-print-directory check-aspire > /dev/null 2>&1; then \
+		echo 'aspire CLI $(ASPIRE_PINNED_VERSION) is already installed; leaving it alone.'; \
+	else \
+		echo 'Installing aspire CLI $(ASPIRE_PINNED_VERSION) as a global .NET tool...'; \
+		dotnet tool update --global aspire.cli --version '$(ASPIRE_PINNED_VERSION)'; \
+		$(MAKE) --no-print-directory check-aspire || { \
+			echo '' 1>&2; \
+			echo 'The install reported success but the `aspire` on PATH still does not match.' 1>&2; \
+			echo 'A global .NET tool is installed into ~/.dotnet/tools — add that directory to' 1>&2; \
+			echo 'your PATH, or remove whichever other aspire precedes it there.' 1>&2; \
+			exit 1; \
+		}; \
+	fi
+
+# Deliberately NOT dependent on `build`, and it passes no --configuration. `aspire run` does its own
+# restore and build of exactly the graph it is about to orchestrate, and it has no configuration
+# switch — it builds Debug, which is what a developer running the stack locally wants.
+#
+# The dashboard is opened by a backgrounded script rather than by the CLI, which has no flag for it:
+# the dashboard sits on an ephemeral port behind a one-time login token, so the URL cannot be known
+# in advance and has to be read back from `aspire ps`. See the script for the full reasoning. It
+# never fails the run — `aspire run` prints the URL anyway.
+run: check-dotnet check-aspire ## Run the whole stack locally, opening the dashboard in a browser
+	@$(DASHBOARD_OPENER) '$(APPHOST)' &
+	aspire run --apphost $(APPHOST)
+
+# ---------------------------------------------------------------------------
 # CI ENTRYPOINT
 # ---------------------------------------------------------------------------
 # `make ci` is the SINGLE command CI/CD pipelines invoke. Both the GitHub
@@ -127,7 +224,32 @@ check-dotnet: ## Verify an installed .NET SDK satisfies the version pinned in gl
 #
 # Projects built from this template extend `ci` by adding their own build/test
 # steps (e.g. `dotnet test`, `npm test`) as dependencies or extra recipe lines.
-ci: lint build test coverage pack sbom ## Run the full CI check suite (what pipelines invoke)
+ci: lint build analyzers-verify test coverage pack sbom ## Run the full CI check suite (what pipelines invoke)
+
+# The strict analyzer default is an explicit entry per rule in
+# eng/analyzers/all-rules.globalconfig, because no bulk severity entry can switch on a rule its
+# analyzer ships disabled. That file is generated from the analyzers the projects resolve from NuGet
+# — pinned by Directory.Packages.props and the lock files, so it is reproducible anywhere — so
+# bumping an analyzer package can add rules it does not mention yet, and a rule that is not
+# mentioned falls back to its own default, which for roughly a third of them is off. `verify` fails
+# the build in that case rather than letting the strict bar quietly soften, and names the rules that
+# differ; `sync` regenerates it.
+#
+# Ordered after `build` to reuse its restore. The generator reads @(ResolvedAnalyzers), which
+# ResolvePackageAssets fills from project.assets.json, so it needs a restored tree; it passes
+# -restore itself and is correct standalone, but running it before `build` meant paying for a
+# second restore on every pipeline run. After `build` that flag costs nothing, because the assets
+# are already current.
+#
+# The cost of this order is that a stale file is reported after the build rather than before it, so
+# a package bump that adds an enabled-by-default rule can fail the build on that rule before this
+# target explains why the configuration is behind. The diagnostic names the rule and the fix is
+# `make analyzers-sync`, which is a short trip; a duplicated restore on every green run is not.
+analyzers-sync: check-dotnet ## Regenerate eng/analyzers/all-rules.globalconfig from the resolved analyzers
+	dotnet run eng/analyzers/sync-rules.cs
+
+analyzers-verify: check-dotnet ## Fail if eng/analyzers/all-rules.globalconfig is stale
+	dotnet run eng/analyzers/sync-rules.cs --check
 
 # The dotnet-build-test hook builds and tests the staged tree on `git commit`. `ci` reaches the same
 # code through its own `build` and `test` targets, so the hook is skipped here: leaving it in would

@@ -1,6 +1,7 @@
 using System.Globalization;
 
 using Library.Example.Abstractions;
+
 using Microsoft.Extensions.Logging;
 
 namespace Library.Example;
@@ -18,6 +19,9 @@ public class GoodToWalkService
     // The probability of rain, as a fraction between 0 and 1, above which an umbrella is worth
     // carrying.
     private const double UmbrellaProbabilityOfRainThreshold = 0.25;
+
+    // The number of digits in a US zipcode, which is the only form this service accepts.
+    private const int ZipCodeLength = 5;
 
     private readonly IWeatherService _weatherService;
 
@@ -55,7 +59,7 @@ public class GoodToWalkService
         // NumberStyles.None keeps the parse to bare digits: the default styles would also accept a
         // leading sign or surrounding whitespace, so "+1234" would be read as the zipcode 1234.
         if (!string.IsNullOrWhiteSpace(zipCode) &&
-            zipCode.Length == 5 &&
+            zipCode.Length is ZipCodeLength &&
             int.TryParse(zipCode, NumberStyles.None, CultureInfo.InvariantCulture, out var numericZipCode))
         {
             return await IsItGoodToWalkAsync(numericZipCode, _weatherService, _logger, cancellationToken).ConfigureAwait(false);

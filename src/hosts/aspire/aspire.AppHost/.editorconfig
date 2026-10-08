@@ -1,0 +1,13 @@
+# Analyzer settings that apply to the Aspire apphost entry point only.
+#
+# The repository builds with <AnalysisMode>All</AnalysisMode> and
+# <TreatWarningsAsErrors>true</TreatWarningsAsErrors> (see Directory.Build.props), so a rule that
+# cannot be satisfied has to be switched off explicitly, with the reason it does not apply.
+[AppHost.cs]
+
+# MA0048 wants the file named after the type it declares. This file declares no type at all: it is
+# top-level statements, and the `Program` class the rule sees is synthesized by the compiler. The
+# rule is therefore only satisfiable by renaming the file to Program.cs, which would hide what it
+# holds — the distributed application graph, which `aspire run` and the Aspire tooling expect to
+# find in AppHost.cs.
+dotnet_diagnostic.MA0048.severity = none
